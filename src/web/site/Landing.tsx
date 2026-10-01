@@ -107,7 +107,7 @@ export function Landing() {
       <SiteSection
         id="demo"
         title="A demo that never gets junked up"
-        lead="Click Try the demo and you get a private copy of Fernhollow Foods, a made-up maker of sauces, spice blends and cold brew."
+        lead="Opening with 1.0: Try the demo gives you a private copy of Fernhollow Foods, a made-up maker of sauces, spice blends and cold brew."
       >
         <ul className="ticks">
           <li>Your own sandbox, ready instantly and deleted within 24 hours, so nobody sees anyone else's mess.</li>
@@ -126,7 +126,7 @@ export function Landing() {
             <strong>Get the code.</strong> Fork the repository.
           </li>
           <li>
-            <strong>Bring Postgres.</strong> Neon, Supabase or PlanetScale, all supported and tested.
+            <strong>Bring Postgres.</strong> Neon, Supabase, PlanetScale or any Postgres 15+.
           </li>
           <li>
             <strong>Migrate.</strong> One command creates the schema and a locked-down app role.
@@ -135,7 +135,10 @@ export function Landing() {
             <strong>Deploy.</strong> Push the Worker to your Cloudflare account and sign in with your SSO.
           </li>
         </ol>
-        <p className="muted-dark">A one-command installer arrives with 1.0; until then the README walks through each step.</p>
+        <p className="muted-dark">
+          A one-command installer arrives with 1.0; until then{" "}
+          {repo ? <a href={`${repo}/blob/main/docs/install.md`}>the install guide</a> : "the install guide"} walks through each step.
+        </p>
       </SiteSection>
     </SiteLayout>
   );

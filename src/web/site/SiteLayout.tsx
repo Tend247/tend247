@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useSession } from "../session.tsx";
+import { SITE_ONLY } from "../siteOnly.ts";
 
 export function SiteLayout({ children }: { children: ReactNode }) {
   const { site, me } = useSession();
@@ -17,10 +18,20 @@ export function SiteLayout({ children }: { children: ReactNode }) {
           <Link to="/roadmap">Roadmap</Link>
           <Link to="/architecture">Architecture</Link>
           <Link to="/#self-host">Self-host</Link>
-          {repo && <a href={repo}>Source</a>}
-          <Link to={me ? "/app" : "/signin"} className="nav-button">
-            {me ? "Open app" : "Sign in"}
-          </Link>
+          {SITE_ONLY ? (
+            repo && (
+              <a href={repo} className="nav-button">
+                GitHub
+              </a>
+            )
+          ) : (
+            <>
+              {repo && <a href={repo}>Source</a>}
+              <Link to={me ? "/app" : "/signin"} className="nav-button">
+                {me ? "Open app" : "Sign in"}
+              </Link>
+            </>
+          )}
         </nav>
       </header>
       <main>{children}</main>
@@ -35,7 +46,7 @@ export function SiteLayout({ children }: { children: ReactNode }) {
           <Link to="/roadmap">Roadmap</Link>
           <Link to="/architecture">Architecture</Link>
           {repo && <a href={repo}>Source</a>}
-          <Link to="/signin">Sign in</Link>
+          {!SITE_ONLY && <Link to="/signin">Sign in</Link>}
         </nav>
       </footer>
     </div>

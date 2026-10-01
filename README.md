@@ -71,6 +71,17 @@ CI (GitHub Actions, `.github/workflows/ci.yml`; a GitLab equivalent is in `.gitl
 
 See [docs/install.md](docs/install.md). In short: create the two database roles on Neon, Supabase or PlanetScale, run migrations, create a Hyperdrive config with caching disabled, set secrets, and `npm run deploy`.
 
+### The marketing site (tend247.com)
+
+The landing, roadmap and architecture pages also build as a static site with no API behind them, deployed as its own assets-only Worker:
+
+```bash
+npm run site:dev      # preview at http://localhost:5173
+npm run site:deploy   # build to dist-site/ and deploy with wrangler.site.jsonc
+```
+
+`wrangler.site.jsonc` attaches the `tend247.com` and `www.tend247.com` custom domains (the zone must be in the same Cloudflare account, with no existing DNS records for those two hostnames). Security headers live in `site-public/_headers`. Set `VITE_REPO_URL` to point the source links somewhere other than `github.com/Tend247/tend247`.
+
 ## Configuration
 
 | Variable | Where | Purpose |
