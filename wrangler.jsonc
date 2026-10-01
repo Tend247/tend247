@@ -1,0 +1,40 @@
+// Tend 24/7 Worker configuration.
+// Every company deploys its own copy into its own Cloudflare account.
+// Run `npm run setup` (Phase 3) or follow docs/install.md to create the resources below
+// and replace the placeholder IDs.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tend247",
+  "main": "./src/worker/index.ts",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat"],
+  // Run the Worker close to Postgres rather than close to the user: most requests make
+  // several database round trips.
+  "placement": { "mode": "smart" },
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*", "/healthz"]
+  },
+  "observability": { "enabled": true },
+  "hyperdrive": [
+    {
+      // Create with caching DISABLED: agents must never see stale queues.
+      //   npx wrangler hyperdrive create tend247-db --connection-string="$TEND247_DB_APP_URL" --caching-disabled
+      "binding": "HYPERDRIVE",
+      "id": "00000000000000000000000000000000",
+      // Used only by `vite dev` / `wrangler dev`.
+      "localConnectionString": "postgres://tend247_app:app_dev_pw@127.0.0.1:54329/tend247_dev"
+    }
+  ],
+  "vars": {
+    "TEND247_DEV_LOGIN": "false",
+    "TEND247_OIDC_AUTO_PROVISION": "off",
+    "TEND247_REQUESTER_DOMAINS": "",
+    // Only the project's own site (tend247.com) shows the marketing pages at /.
+    "TEND247_PUBLIC_SITE": "false",
+    "TEND247_REPO_URL": ""
+  }
+  // Secrets (set with `npx wrangler secret put <NAME>`):
+  //   TEND247_SESSION_SECRET      at least 32 random characters
+  //   TEND247_OIDC_CLIENT_SECRET  when OIDC sign-in is configured
+}

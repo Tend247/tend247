@@ -1,0 +1,47 @@
+{
+  "name": "tend247",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tend 24/7: a configurable, open-source work-management platform for front and back-office teams, built on Cloudflare Workers and Postgres.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:migrate": "node --experimental-strip-types scripts/migrate.ts",
+    "db:seed": "node --experimental-strip-types scripts/seed.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings src/worker/worker-configuration.d.ts",
+    "licenses:check": "node --experimental-strip-types scripts/licenses.ts --check",
+    "licenses:notices": "node --experimental-strip-types scripts/licenses.ts --notices"
+  },
+  "dependencies": {
+    "hono": "^4.13.12",
+    "oauth4webapi": "^3.8.8",
+    "postgres": "^3.4.9",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router": "^8.4.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.62.4",
+    "@cloudflare/workers-types": "^5.20261001.1",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "jose": "^6.2.12",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.146.0"
+  }
+}
