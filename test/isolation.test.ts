@@ -22,17 +22,26 @@ beforeAll(async () => {
   expect(r.status).toBe(201);
   aRecordId = r.json.record.id;
   aRecordKey = r.json.record.key;
+  // Rows in the Phase 1–2 tables too.
+  await adminA.post(`/api/records/${aRecordKey}/comments`, { body: "Alpha note", internal: true });
+  await adminA.post("/api/views", { name: "Alpha view", shared: true, definition: { filters: {} } });
+  await adminA.post("/api/admin/teams", { name: "Alpha team", memberIds: [a.admin.id] });
 });
 
 describe("row-level security", () => {
+  // Routing tables hold only identifiers and are read before a workspace is known (inbound
+  // email, background schedulers); see the end of migrations/0002.
+  const ROUTING_TABLES = ["inbound_addresses", "email_threads", "work_signals", "scheduled_jobs"];
+
   it("every table with a tenant_id has RLS enabled and forced", async () => {
     const rows = await owner<{ table: string; enabled: boolean; forced: boolean }[]>`
       select c.relname as table, c.relrowsecurity as enabled, c.relforcerowsecurity as forced
       from pg_class c
       join pg_namespace n on n.oid = c.relnamespace
       join information_schema.columns col on col.table_schema = n.nspname and col.table_name = c.relname
-      where n.nspname = 'public' and c.relkind = 'r' and col.column_name = 'tenant_id'`;
-    expect(rows.length).toBeGreaterThanOrEqual(10);
+      where n.nspname = 'public' and c.relkind = 'r' and col.column_name = 'tenant_id'
+        and c.relname not in (select jsonb_array_elements_text(${owner.json(ROUTING_TABLES)}))`;
+    expect(rows.length).toBeGreaterThanOrEqual(29);
     for (const r of rows) expect({ table: r.table, enabled: r.enabled, forced: r.forced }).toEqual({ table: r.table, enabled: true, forced: true });
   });
 
@@ -60,6 +69,20 @@ describe("row-level security", () => {
       const updated = await tx`update records set title = 'hijacked' where id = ${aRecordId}`;
       expect(updated.count).toBe(0);
     });
+  });
+
+  it("every row-secured table hides workspace A's rows from workspace B", async () => {
+    const tables = await owner<{ table: string }[]>`
+      select c.relname as table from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity`;
+    expect(tables.length).toBeGreaterThanOrEqual(29);
+    let seenInA = 0;
+    for (const { table } of tables) {
+      seenInA += await withTenant(sql, a.id, async (tx) => (await tx.unsafe(`select count(*)::int as n from ${table} where tenant_id = $1`, [a.id]))[0]!.n);
+      const n = await withTenant(sql, b.id, async (tx) => (await tx.unsafe(`select count(*)::int as n from ${table} where tenant_id = $1`, [a.id]))[0]!.n);
+      expect({ table, n }).toEqual({ table, n: 0 });
+    }
+    expect(seenInA).toBeGreaterThan(10);
   });
 
   it("rejects writing a row into another workspace", async () => {

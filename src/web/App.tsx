@@ -10,6 +10,13 @@ import { AdminProject } from "./pages/admin/AdminProject.tsx";
 import { AdminUsers } from "./pages/admin/AdminUsers.tsx";
 import { AdminAudit } from "./pages/admin/AdminAudit.tsx";
 import { Trash } from "./pages/Trash.tsx";
+import { Approvals, Notifications } from "./pages/Inbox.tsx";
+import { WorkflowEditor } from "./pages/admin/WorkflowEditor.tsx";
+import { LayoutEditor } from "./pages/admin/LayoutEditor.tsx";
+import { AdminTeams } from "./pages/admin/AdminTeams.tsx";
+import { AdminAutomation } from "./pages/admin/AdminAutomation.tsx";
+import { AdminCalendars } from "./pages/admin/AdminCalendars.tsx";
+import { AdminSettings } from "./pages/admin/AdminSettings.tsx";
 import { Landing } from "./site/Landing.tsx";
 import { Roadmap } from "./site/Roadmap.tsx";
 import { Architecture } from "./site/Architecture.tsx";
@@ -38,7 +45,7 @@ export function App() {
 }
 
 function AppShell() {
-  const { me, reload } = useSession();
+  const { me, reload, unread } = useSession();
   const navigate = useNavigate();
   if (!me) return null;
 
@@ -49,6 +56,7 @@ function AppShell() {
   }
 
   const isAdmin = me.role === "admin";
+  const staff = me.role !== "requester";
   return (
     <div className="shell app">
       <header className="topbar">
@@ -57,12 +65,16 @@ function AppShell() {
         </NavLink>
         <nav>
           <NavLink to="/app" end>
-            Records
+            {staff ? "Records" : "My requests"}
           </NavLink>
+          {staff && <NavLink to="/app/approvals">Approvals</NavLink>}
           {isAdmin && <NavLink to="/app/admin">Admin</NavLink>}
           {isAdmin && <NavLink to="/app/trash">Trash</NavLink>}
         </nav>
         <div className="spacer" />
+        <NavLink to="/app/notifications" className="bell" aria-label={`Notifications${unread ? `, ${unread} unread` : ""}`}>
+          Notifications{unread > 0 && <span className="badge">{unread > 99 ? "99+" : unread}</span>}
+        </NavLink>
         <span className="muted small">
           {me.displayName} · {me.role}
         </span>
@@ -75,6 +87,14 @@ function AppShell() {
           <Route index element={<RecordList />} />
           <Route path="records/new" element={<RecordNew />} />
           <Route path="records/:key" element={<RecordDetail />} />
+          <Route path="notifications" element={<Notifications />} />
+          {staff && <Route path="approvals" element={<Approvals />} />}
+          {isAdmin && <Route path="admin/record-types/:id/workflow" element={<WorkflowEditor />} />}
+          {isAdmin && <Route path="admin/record-types/:id/layout" element={<LayoutEditor />} />}
+          {isAdmin && <Route path="admin/teams" element={<AdminTeams />} />}
+          {isAdmin && <Route path="admin/automation" element={<AdminAutomation />} />}
+          {isAdmin && <Route path="admin/calendars" element={<AdminCalendars />} />}
+          {isAdmin && <Route path="admin/settings" element={<AdminSettings />} />}
           {isAdmin && <Route path="admin" element={<AdminProjects />} />}
           {isAdmin && <Route path="admin/projects/:id" element={<AdminProject />} />}
           {isAdmin && <Route path="admin/users" element={<AdminUsers />} />}

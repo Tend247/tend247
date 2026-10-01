@@ -28,6 +28,20 @@ export interface AppConfig {
   publicSite: boolean;
   /** Public source repository shown on the marketing pages. */
   repoUrl: string | null;
+  email: EmailConfig;
+  /** Nightly export settings (the BACKUPS bucket binding enables it). */
+  backup: { encryptionKey: string | null; dailyKeep: number; monthlyKeep: number };
+}
+
+export interface EmailConfig {
+  provider: "cloudflare" | "postmark" | "resend" | "none";
+  /** From address, e.g. "Tend 24/7 <support@acme.com>". */
+  from: string | null;
+  apiKey: string | null;
+  /** Domain that receives replies and queue mail (Cloudflare Email Routing), e.g. "help.acme.com". */
+  inboundDomain: string | null;
+  /** Which Authentication-Results header to trust: the one added by this receiving server. */
+  inboundAuthservId: string;
 }
 
 const bool = z
@@ -49,6 +63,21 @@ const schema = z.object({
   TEND247_PUBLIC_URL: z.string().url().optional().or(z.literal("")),
   TEND247_PUBLIC_SITE: bool,
   TEND247_REPO_URL: z.string().url().optional().or(z.literal("")),
+  TEND247_EMAIL_PROVIDER: z.enum(["cloudflare", "postmark", "resend", "none", ""]).optional(),
+  TEND247_EMAIL_FROM: z.string().max(300).optional(),
+  TEND247_EMAIL_API_KEY: z.string().max(500).optional(),
+  TEND247_INBOUND_DOMAIN: z
+    .string()
+    .regex(/^([a-z0-9-]+\.)+[a-z]{2,}$/i, "TEND247_INBOUND_DOMAIN must be a domain name")
+    .optional()
+    .or(z.literal("")),
+  TEND247_INBOUND_AUTHSERV_ID: z.string().max(200).optional(),
+  TEND247_BACKUP_ENCRYPTION_KEY: z
+    .string()
+    .refine((v) => v === "" || /^[A-Za-z0-9+/_-]{43}=?$/.test(v), "TEND247_BACKUP_ENCRYPTION_KEY must be 32 bytes, base64")
+    .optional(),
+  TEND247_BACKUP_DAILY_KEEP: z.coerce.number().int().min(1).max(365).optional(),
+  TEND247_BACKUP_MONTHLY_KEEP: z.coerce.number().int().min(0).max(120).optional(),
 });
 
 /** Parse configuration from Worker bindings or process.env; throws a readable error. */
@@ -81,6 +110,13 @@ export function loadConfig(env: Record<string, unknown>): AppConfig {
   if (oidc && oidc.trustUnverifiedEmail && oidc.allowedDomains.length === 0) {
     throw new Error("Invalid Tend 24/7 configuration: TEND247_OIDC_TRUST_UNVERIFIED_EMAIL needs TEND247_OIDC_ALLOWED_DOMAINS");
   }
+  const provider = (e.TEND247_EMAIL_PROVIDER || "none") as EmailConfig["provider"];
+  if (provider !== "none" && !e.TEND247_EMAIL_FROM) {
+    throw new Error("Invalid Tend 24/7 configuration: TEND247_EMAIL_PROVIDER needs TEND247_EMAIL_FROM");
+  }
+  if ((provider === "postmark" || provider === "resend") && !e.TEND247_EMAIL_API_KEY) {
+    throw new Error(`Invalid Tend 24/7 configuration: TEND247_EMAIL_PROVIDER=${provider} needs TEND247_EMAIL_API_KEY`);
+  }
   return {
     sessionSecret: e.TEND247_SESSION_SECRET,
     sessionTtlHours: e.TEND247_SESSION_TTL_HOURS ?? 24 * 14,
@@ -90,5 +126,17 @@ export function loadConfig(env: Record<string, unknown>): AppConfig {
     publicUrl: e.TEND247_PUBLIC_URL || null,
     publicSite: e.TEND247_PUBLIC_SITE,
     repoUrl: e.TEND247_REPO_URL || null,
+    email: {
+      provider,
+      from: e.TEND247_EMAIL_FROM || null,
+      apiKey: e.TEND247_EMAIL_API_KEY || null,
+      inboundDomain: e.TEND247_INBOUND_DOMAIN ? e.TEND247_INBOUND_DOMAIN.toLowerCase() : null,
+      inboundAuthservId: e.TEND247_INBOUND_AUTHSERV_ID || "mx.cloudflare.net",
+    },
+    backup: {
+      encryptionKey: e.TEND247_BACKUP_ENCRYPTION_KEY || null,
+      dailyKeep: e.TEND247_BACKUP_DAILY_KEEP ?? 14,
+      monthlyKeep: e.TEND247_BACKUP_MONTHLY_KEEP ?? 12,
+    },
   };
 }

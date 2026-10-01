@@ -1,6 +1,6 @@
 {
   "name": "tend247",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Tend 24/7: a configurable, open-source work-management platform for front and back-office teams, built on Cloudflare Workers and Postgres.",
   "license": "Apache-2.0",
@@ -16,6 +16,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "node --experimental-strip-types scripts/migrate.ts",
     "db:seed": "node --experimental-strip-types scripts/seed.ts",
+    "rebuild": "node --experimental-strip-types scripts/rebuild.ts",
+    "export:decrypt": "node --experimental-strip-types scripts/decrypt-export.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings src/worker/worker-configuration.d.ts",
@@ -25,6 +27,7 @@
   "dependencies": {
     "hono": "^4.13.12",
     "oauth4webapi": "^3.8.8",
+    "postal-mime": "^4.0.2",
     "postgres": "^3.4.9",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

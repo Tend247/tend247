@@ -6,27 +6,27 @@ import { ProductPreview } from "./ProductPreview.tsx";
 const today = [
   {
     title: "Configure without code",
-    body: "Admins add projects, record types and ten kinds of custom field at runtime. Configuration is data, so adding a field never changes the database schema.",
+    body: "Admins add record types, ten kinds of custom field, workflows and form layouts at runtime. Every version is kept, so any earlier one can be restored.",
+  },
+  {
+    title: "Queues that route themselves",
+    body: "Teams own queues, new work is assigned round-robin, and automation rules set fields, assign, move, notify or call a webhook when something happens.",
+  },
+  {
+    title: "SLAs on real working hours",
+    body: "First-response and resolution targets count business hours in each calendar's time zone, skip holidays, pause while waiting, and warn before a breach.",
+  },
+  {
+    title: "Approvals and email that thread",
+    body: "Steps can need one approver or a sequence, decided in the app or from a one-time email link. Mail to a queue creates a record; replies land as comments.",
   },
   {
     title: "Workspaces that cannot leak",
-    body: "Row-level security on every table, enforced by Postgres itself and proven by isolation tests on every build. The app refuses to start on an unsafe database role.",
+    body: "Row-level security on every table, enforced by Postgres itself and proven by isolation tests on every build. HR and finance queues can be restricted to their teams.",
   },
   {
-    title: "History on everything",
-    body: "Every record change and every configuration change lands in an append-only log with who, when, and the before and after values.",
-  },
-  {
-    title: "A trash that forgives",
-    body: "Deleted records move to a trash, and admins restore them with their full history intact.",
-  },
-  {
-    title: "Sign in your way",
-    body: "Staff use your company's single sign-on (Okta, Entra ID, Google Workspace). Requesters get one-time email links, no passwords.",
-  },
-  {
-    title: "Safe with many hands",
-    body: "Records get readable keys like FIN-142, and optimistic locking stops two agents silently overwriting each other.",
+    title: "Recoverable by design",
+    body: "Full history on every record, a trash for records, comments and files, a nightly encrypted export to a bucket you control, and an attachment replica.",
   },
 ];
 
@@ -78,7 +78,7 @@ export function Landing() {
         </div>
       </section>
 
-      <SiteSection id="features" title="What it does today" lead="Foundations shipped first: the parts every later feature depends on.">
+      <SiteSection id="features" title="What it does today" lead="Foundations, the work core and the service layer are shipped and tested end to end.">
         <div className="cards">
           {today.map((c) => (
             <article key={c.title} className="card-dark">

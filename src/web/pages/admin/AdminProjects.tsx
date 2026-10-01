@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router";
+import { Link, NavLink } from "react-router";
 import { api, issuesByField } from "../../api.ts";
 import { useSession } from "../../session.tsx";
 
@@ -14,9 +14,13 @@ interface AdminProject {
 export function AdminNav() {
   return (
     <nav className="subnav">
-      <Link to="/app/admin">Projects</Link>
-      <Link to="/app/admin/users">People</Link>
-      <Link to="/app/admin/audit">Audit log</Link>
+      <NavLink to="/app/admin" end>Projects</NavLink>
+      <NavLink to="/app/admin/users">People</NavLink>
+      <NavLink to="/app/admin/teams">Teams</NavLink>
+      <NavLink to="/app/admin/automation">Automation</NavLink>
+      <NavLink to="/app/admin/calendars">Calendars</NavLink>
+      <NavLink to="/app/admin/settings">Settings</NavLink>
+      <NavLink to="/app/admin/audit">Audit log</NavLink>
     </nav>
   );
 }

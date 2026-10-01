@@ -3,6 +3,7 @@ import type { AuthContext } from "./auth/sessions.ts";
 import type { Sql } from "./db/client.ts";
 import type { AppConfig } from "./config.ts";
 import type { EmailSender } from "./email/sender.ts";
+import type { BlobStore } from "./attachments/blobs.ts";
 import type { FetchLike } from "./auth/oidc.ts";
 import type { Actor } from "./audit.ts";
 import { AppError, forbidden } from "./lib/errors.ts";
@@ -19,6 +20,16 @@ export interface AppDeps {
   email: EmailSender;
   /** Fetch used for OIDC discovery and token calls (tests inject a fake provider). */
   oidcFetch?: FetchLike;
+  /** Attachment storage (R2 bucket ATTACHMENTS). Without it, uploads are turned off. */
+  blobs?: BlobStore;
+  /** Attachment replica (R2 bucket ATTACHMENTS_REPLICA), copied after each upload. */
+  replica?: BlobStore;
+  /** Nightly export destination (R2 bucket BACKUPS, ideally in another account). */
+  backups?: BlobStore;
+  /** Fetch used for outbound webhooks (tests inject a fake). */
+  webhookFetch?: (input: string, init: RequestInit) => Promise<Response>;
+  /** Clock override for tests. */
+  now?: () => Date;
 }
 
 export type AppEnv = {

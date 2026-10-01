@@ -18,7 +18,7 @@ const phases: { version: string; name: string; status: Status; items: string[]; 
   {
     version: "v0.2",
     name: "Work core",
-    status: "next",
+    status: "shipped",
     items: [
       "Configurable workflows with status categories",
       "Layouts, queues, teams and round-robin assignment",
@@ -30,7 +30,7 @@ const phases: { version: string; name: string; status: Status; items: string[]; 
   {
     version: "v0.3",
     name: "Service layer",
-    status: "planned",
+    status: "shipped",
     items: [
       "SLAs on business-hours calendars",
       "Automation rules and approvals",
@@ -42,7 +42,7 @@ const phases: { version: string; name: string; status: Status; items: string[]; 
   {
     version: "v1.0",
     name: "Launch",
-    status: "planned",
+    status: "next",
     items: [
       "Requester portal, REST API, signed webhooks",
       "Four starter templates and dashboards",
@@ -92,8 +92,8 @@ export function Roadmap() {
         <p className="eyebrow">Roadmap</p>
         <h1>From foundations to a market-ready 1.0</h1>
         <p className="hero-body">
-          Four phases, each closed by a gate that must pass before the next begins. Foundations are shipped; the work core is
-          next.
+          Four phases, each closed by a gate that must pass before the next begins. Foundations, the work core and the service
+          layer are shipped; the launch is next.
         </p>
         <div className="progress" role="img" aria-label={`${done} of ${phases.length} phases shipped`}>
           {phases.map((p) => (

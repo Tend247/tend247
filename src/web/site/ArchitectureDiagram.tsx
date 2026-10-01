@@ -5,17 +5,17 @@ const clients = [
   ["Requester portal", "plus landing and demo"],
   ["Inbound email", "via Email Routing"],
   ["API clients", "scoped tokens"],
-  ["Cron Triggers", "sweeps, demo pool"],
+  ["Cron Trigger", "every minute: events, timers"],
 ] as const;
 
 const services = [
-  ["Postgres via Hyperdrive", "records, config, history"],
-  ["Durable Objects", "live updates, simulator"],
-  ["Queues", "notify, webhooks, rules"],
-  ["Workflows", "SLA timers, approvals"],
-  ["R2", "attachments"],
-  ["KV", "compiled config cache"],
-  ["Email Sending", "outbound notifications"],
+  ["Postgres via Hyperdrive", "records, config, outbox, timers"],
+  ["R2: attachments", "files and their replica"],
+  ["R2: backups", "nightly encrypted export"],
+  ["Email Sending", "or Postmark, Resend"],
+  ["Email Routing", "queue addresses, replies"],
+  ["Durable Objects", "live updates, demo (1.0)"],
+  ["Queues", "optional fan-out at scale"],
 ] as const;
 
 export function ArchitectureDiagram() {

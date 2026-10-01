@@ -1,5 +1,7 @@
 import { afterAll } from "vitest";
 import { createApp } from "../src/worker/app.ts";
+import type { AppDeps } from "../src/worker/http.ts";
+import { workerDeps } from "../src/worker/jobs/runner.ts";
 import { createSql, withTenant, type Sql } from "../src/worker/db/client.ts";
 import type { AppConfig } from "../src/worker/config.ts";
 import { MemoryEmailSender } from "../src/worker/email/sender.ts";
@@ -35,20 +37,30 @@ export const baseConfig: AppConfig = {
   publicUrl: null,
   publicSite: false,
   repoUrl: null,
+  email: { provider: "none", from: "Tend 24/7 <tend@fernhollow.test>", apiKey: null, inboundDomain: "help.fernhollow.test", inboundAuthservId: "mx.cloudflare.net" },
+  backup: { encryptionKey: null, dailyKeep: 14, monthlyKeep: 12 },
 };
 
 export function makeApp(
   sql: Sql,
-  opts: { config?: Partial<AppConfig>; email?: MemoryEmailSender; oidcFetch?: FetchLike } = {},
+  opts: { config?: Partial<AppConfig>; email?: MemoryEmailSender; oidcFetch?: FetchLike } & Partial<
+    Pick<AppDeps, "blobs" | "replica" | "backups" | "webhookFetch" | "now">
+  > = {},
 ) {
   const email = opts.email ?? new MemoryEmailSender();
-  const app = createApp({
+  const deps: AppDeps = {
     config: { ...baseConfig, ...opts.config },
     getSql: () => sql,
     email,
     oidcFetch: opts.oidcFetch,
-  });
-  return { app, email };
+    blobs: opts.blobs,
+    replica: opts.replica,
+    backups: opts.backups,
+    webhookFetch: opts.webhookFetch,
+    now: opts.now,
+  };
+  const app = createApp(deps);
+  return { app, email, deps, worker: () => workerDeps(deps, sql) };
 }
 
 let seq = 0;
@@ -120,6 +132,35 @@ export class Client {
 
   get(path: string) {
     return this.req("GET", path);
+  }
+  put(path: string, body: unknown) {
+    return this.req("PUT", path, body);
+  }
+  /** Upload raw bytes as an attachment. */
+  async upload(path: string, bytes: Uint8Array, filename: string, contentType = "application/octet-stream", headers: Record<string, string> = {}) {
+    const res = await this.app.request(`http://localhost${path}`, {
+      method: "POST",
+      body: bytes as Uint8Array<ArrayBuffer>,
+      headers: {
+        "content-type": contentType,
+        "x-tend-upload": "1",
+        "x-filename": encodeURIComponent(filename),
+        "content-length": String(bytes.byteLength),
+        cookie: this.cookie,
+        ...headers,
+      },
+    });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = text;
+    }
+    return { status: res.status, json, headers: res.headers };
+  }
+  async raw(path: string) {
+    return this.app.request(`http://localhost${path}`, { headers: { cookie: this.cookie } });
   }
   post(path: string, body: unknown = {}) {
     return this.req("POST", path, body);

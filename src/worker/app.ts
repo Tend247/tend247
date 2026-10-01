@@ -9,6 +9,8 @@ import { apiRoutes } from "./routes/api.ts";
 import { adminRoutes } from "./routes/admin.ts";
 import { AppError, fromPostgres } from "./lib/errors.ts";
 
+const UPLOAD_PATH = /^\/api\/records\/[^/]+\/attachments$/;
+
 /**
  * Build the HTTP app. The Worker entry and the tests both call this, injecting the
  * database client, email sender and configuration.
@@ -68,7 +70,10 @@ export function createApp(deps: AppDeps) {
         throw new AppError("forbidden", "Cross-site requests are not allowed");
       }
       const mediaType = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
-      if (m !== "DELETE" && mediaType !== "application/json") {
+      // File uploads send the raw file; the custom X-Tend-Upload header plays the same role
+      // (it cannot be sent cross-site without a preflight).
+      const upload = m === "POST" && c.req.header("x-tend-upload") === "1" && UPLOAD_PATH.test(new URL(c.req.url).pathname);
+      if (m !== "DELETE" && !upload && mediaType !== "application/json") {
         throw new AppError("unsupported_media_type", "Send JSON with Content-Type: application/json");
       }
     }

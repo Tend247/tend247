@@ -2,8 +2,12 @@
 // workspace admin changes them at runtime and the schema never moves.
 import { z } from "zod";
 import type { Tx } from "../db/client.ts";
-import { audit, type Actor } from "../audit.ts";
+import { audit, isStaff, type Actor } from "../audit.ts";
 import { AppError, invalid, notFound, type FieldIssue } from "../lib/errors.ts";
+import { uuid } from "../lib/validate.ts";
+import { DEFAULT_WORKFLOW, type WorkflowDefinition } from "../workflow/definition.ts";
+import { defaultLayout, type LayoutDefinition } from "../workflow/layout.ts";
+import { publishDefinition, publishedByOwner } from "./versions.ts";
 import {
   coerceValue,
   fieldPatchSchema,
@@ -19,6 +23,14 @@ export interface Project {
   key: string;
   name: string;
   description: string;
+  /** Records visible only to admins, the project's teams, the assignee and the requester. */
+  restricted: boolean;
+  /** Requesters may submit to this project. */
+  requesterAccess: boolean;
+  assignment: "manual" | "round_robin";
+  defaultTeamId: string | null;
+  /** Inbound email address (local part) that creates records, and the type it creates. */
+  inbound: { address: string; recordTypeId: string } | null;
   archivedAt: Date | null;
   createdAt: Date;
 }
@@ -34,6 +46,8 @@ export interface RecordType {
 
 export interface CompiledRecordType extends RecordType {
   fields: FieldDef[];
+  workflow: WorkflowDefinition;
+  layout: LayoutDefinition;
 }
 
 export interface CompiledProject extends Project {
@@ -52,7 +66,25 @@ const projectSchema = z.object({
   description: z.string().max(5000).default(""),
 });
 const projectPatchSchema = z
-  .object({ name: z.string().trim().min(1).max(200), description: z.string().max(5000), archived: z.boolean() })
+  .object({
+    name: z.string().trim().min(1).max(200),
+    description: z.string().max(5000),
+    archived: z.boolean(),
+    restricted: z.boolean(),
+    requesterAccess: z.boolean(),
+    assignment: z.enum(["manual", "round_robin"]),
+    defaultTeamId: uuid.nullable(),
+    inbound: z
+      .object({
+        address: z
+          .string()
+          .trim()
+          .toLowerCase()
+          .regex(/^[a-z0-9][a-z0-9._-]{0,40}$/, "Letters, digits, dots, dashes; up to 41 characters"),
+        recordTypeId: uuid,
+      })
+      .nullable(),
+  })
   .partial()
   .strict();
 
@@ -68,27 +100,34 @@ const recordTypePatchSchema = z
 
 // ---------------------------------------------------------------- projects
 
+const PROJECT_COLUMNS = (tx: Tx) => tx`
+  p.id, p.key, p.name, p.description, p.restricted, p.requester_access, p.assignment, p.default_team_id,
+  p.archived_at, p.created_at,
+  (select jsonb_build_object('address', ia.address, 'recordTypeId', ia.record_type_id)
+     from inbound_addresses ia where ia.tenant_id = p.tenant_id and ia.project_id = p.id) as inbound`;
+
 export async function listProjects(tx: Tx, opts: { includeArchived?: boolean } = {}): Promise<Project[]> {
   return tx<Project[]>`
-    select id, key, name, description, archived_at, created_at from projects
-    where ${opts.includeArchived ? tx`true` : tx`archived_at is null`}
-    order by name`;
+    select ${PROJECT_COLUMNS(tx)} from projects p
+    where ${opts.includeArchived ? tx`true` : tx`p.archived_at is null`}
+    order by p.name`;
 }
 
 export async function getProject(tx: Tx, id: string): Promise<Project> {
-  const [p] = await tx<Project[]>`select id, key, name, description, archived_at, created_at from projects where id = ${id}`;
+  const [p] = await tx<Project[]>`select ${PROJECT_COLUMNS(tx)} from projects p where p.id = ${id}`;
   if (!p) throw notFound("Project");
   return p;
 }
 
 export async function createProject(tx: Tx, actor: Actor, input: unknown): Promise<Project> {
   const data = parse(projectSchema, input);
-  const [p] = await tx<Project[]>`
+  const [row] = await tx<{ id: string }[]>`
     insert into projects (tenant_id, key, name, description)
     values (${actor.tenantId}, ${data.key}, ${data.name}, ${data.description})
-    returning id, key, name, description, archived_at, created_at`;
-  await audit(tx, actor, { entity: "project", entityId: p!.id, action: "create", after: p });
-  return p!;
+    returning id`;
+  const p = await getProject(tx, row!.id);
+  await audit(tx, actor, { entity: "project", entityId: p.id, action: "create", after: p });
+  return p;
 }
 
 /** The project key is permanent: it is baked into every record key (FIN-142). */
@@ -96,15 +135,36 @@ export async function updateProject(tx: Tx, actor: Actor, id: string, input: unk
   const patch = parse(projectPatchSchema, input);
   const before = await getProject(tx, id);
   const archivedAt = patch.archived === undefined ? before.archivedAt : patch.archived ? new Date() : null;
-  const [after] = await tx<Project[]>`
+  const defaultTeamId = patch.defaultTeamId === undefined ? before.defaultTeamId : patch.defaultTeamId;
+  if (defaultTeamId && defaultTeamId !== before.defaultTeamId) {
+    const [team] = await tx`select 1 from teams where id = ${defaultTeamId} and archived_at is null`;
+    if (!team) throw invalid([{ field: "defaultTeamId", message: "Unknown team" }]);
+  }
+  await tx`
     update projects set
       name = ${patch.name ?? before.name},
       description = ${patch.description ?? before.description},
+      restricted = ${patch.restricted ?? before.restricted},
+      requester_access = ${patch.requesterAccess ?? before.requesterAccess},
+      assignment = ${patch.assignment ?? before.assignment},
+      default_team_id = ${defaultTeamId},
       archived_at = ${archivedAt}
-    where id = ${id}
-    returning id, key, name, description, archived_at, created_at`;
+    where id = ${id}`;
+  if (patch.inbound !== undefined) {
+    await tx`delete from inbound_addresses where tenant_id = ${actor.tenantId} and project_id = ${id}`;
+    if (patch.inbound) {
+      const rt = await getRecordType(tx, patch.inbound.recordTypeId);
+      if (rt.projectId !== id) throw invalid([{ field: "inbound.recordTypeId", message: "Not a record type of this project" }]);
+      const taken = await tx`select 1 from inbound_addresses where address = ${patch.inbound.address}`;
+      if (taken.length) throw invalid([{ field: "inbound.address", message: "That address is not available; choose another" }]);
+      await tx`
+        insert into inbound_addresses (address, tenant_id, project_id, record_type_id)
+        values (${patch.inbound.address}, ${actor.tenantId}, ${id}, ${rt.id})`;
+    }
+  }
+  const after = await getProject(tx, id);
   await audit(tx, actor, { entity: "project", entityId: id, action: "update", before, after });
-  return after!;
+  return after;
 }
 
 // ---------------------------------------------------------------- record types
@@ -124,6 +184,8 @@ export async function createRecordType(tx: Tx, actor: Actor, projectId: string, 
     values (${actor.tenantId}, ${projectId}, ${data.key}, ${data.name}, ${data.description})
     returning id, project_id, key, name, description, archived_at`;
   await audit(tx, actor, { entity: "record_type", entityId: rt!.id, action: "create", after: rt });
+  // Every record type starts with the default workflow as version 1.
+  await publishDefinition(tx, actor, "workflow", rt!.id, DEFAULT_WORKFLOW);
   return rt!;
 }
 
@@ -236,23 +298,44 @@ export async function updateField(tx: Tx, actor: Actor, id: string, input: unkno
 
 // ---------------------------------------------------------------- compiled config
 
-/** Everything a client needs to render forms: projects → record types → active fields. */
-export async function getCompiledConfig(tx: Tx): Promise<CompiledProject[]> {
-  const projects = await listProjects(tx);
+/**
+ * Everything a client needs to render forms and boards: projects → record types → active
+ * fields, published workflow and layout. Requesters see only projects open to them, only
+ * the transitions they may run, and no approver ids.
+ */
+export async function getCompiledConfig(tx: Tx, actor?: Pick<Actor, "role">): Promise<CompiledProject[]> {
+  const staff = !actor || isStaff(actor);
+  const projects = (await listProjects(tx)).filter((p) => staff || p.requesterAccess);
   const types = await tx<RecordType[]>`
     select id, project_id, key, name, description, archived_at from record_types
     where archived_at is null order by name`;
   const fields = await tx<(FieldDef & { recordTypeId: string })[]>`
     select ${FIELD_COLUMNS(tx)}, record_type_id from field_defs
     where archived_at is null order by position, created_at`;
+  const workflows = await publishedByOwner(tx, "workflow");
+  const layouts = await publishedByOwner(tx, "layout");
   return projects.map((p) => ({
-    ...p,
+    ...(staff ? p : { ...p, inbound: null, defaultTeamId: null }),
     recordTypes: types
       .filter((t) => t.projectId === p.id)
-      .map((t) => ({
-        ...t,
-        fields: fields.filter((f) => f.recordTypeId === t.id).map(({ recordTypeId: _r, ...f }) => f),
-      })),
+      .map((t) => {
+        const own = fields.filter((f) => f.recordTypeId === t.id).map(({ recordTypeId: _r, ...f }) => f);
+        let workflow = (workflows.get(t.id)?.definition as WorkflowDefinition | undefined) ?? DEFAULT_WORKFLOW;
+        if (!staff) {
+          workflow = {
+            ...workflow,
+            transitions: workflow.transitions
+              .filter((tr) => tr.roles.includes("requester"))
+              .map(({ approval, ...tr }) => ({ ...tr, ...(approval ? { approval: { mode: approval.mode, approvers: [] } } : {}) })),
+          };
+        }
+        return {
+          ...t,
+          fields: own,
+          workflow,
+          layout: (layouts.get(t.id)?.definition as LayoutDefinition | undefined) ?? defaultLayout(own),
+        };
+      }),
   }));
 }
 

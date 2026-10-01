@@ -1,21 +1,62 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../http.ts";
-import { actorOf, readJson, requireAuth, requireRole } from "../http.ts";
-import { withTenant } from "../db/client.ts";
+import type { AppEnv, Ctx } from "../http.ts";
+import { actorOf, readJson, requireAuth, requireRole, runAfterResponse } from "../http.ts";
+import { withTenant, type Tx } from "../db/client.ts";
+import type { Actor } from "../audit.ts";
 import { getCompiledConfig } from "../config/service.ts";
 import { listUsers } from "../users/service.ts";
+import { listTeams } from "../teams/service.ts";
 import {
+  bulkUpdate,
   createRecord,
   deleteRecord,
+  getBoard,
   getRecord,
   listEvents,
   listRecords,
   listTrash,
+  purgeRecord,
   restoreRecord,
+  revertChange,
   updateRecord,
   type ListFilters,
+  type Sort,
 } from "../records/service.ts";
+import { runTransition, transitionRecord } from "../records/transitions.ts";
+import { availableTransitions } from "../workflow/definition.ts";
+import { getWorkflow } from "../config/versions.ts";
+import {
+  createComment,
+  deleteComment,
+  editComment,
+  listComments,
+  listDeletedComments,
+  listWatchers,
+  restoreComment,
+  setWatching,
+} from "../comments/service.ts";
+import {
+  deleteAttachment,
+  downloadAttachment,
+  listAttachments,
+  listDeletedAttachments,
+  restoreAttachment,
+  uploadAttachment,
+} from "../attachments/service.ts";
+import { createLink, createView, deleteLink, deleteView, listLinks, listViews, updateView } from "../views/service.ts";
+import { cancelApproval, decideApproval, listMyApprovals, listRecordApprovals } from "../approvals/service.ts";
+import { listClocks } from "../sla/service.ts";
+import { getSettings } from "../settings/service.ts";
+import { listNotifications, markRead, getPrefs, updatePrefs } from "../notifications/service.ts";
+import { processTenantOutbox, workerDeps } from "../jobs/runner.ts";
 import { AppError } from "../lib/errors.ts";
+import { listParam } from "../lib/validate.ts";
+
+/** Run `fn` in the signed-in person's workspace. */
+function inTenant<T>(c: Ctx, fn: (tx: Tx, actor: Actor) => Promise<T>): Promise<T> {
+  const auth = requireAuth(c);
+  return withTenant(c.get("sql"), auth.tenantId, (tx) => fn(tx, actorOf(auth)));
+}
 
 function parseCustomFilter(raw: string | undefined): Record<string, unknown> | undefined {
   if (!raw) return undefined;
@@ -28,7 +69,38 @@ function parseCustomFilter(raw: string | undefined): Record<string, unknown> | u
   throw new AppError("bad_request", "custom must be a JSON object, e.g. {\"vendor\":\"Acme\"}");
 }
 
+export function filtersFromQuery(q: Record<string, string>): ListFilters {
+  return {
+    projectId: q.projectId || undefined,
+    recordTypeId: q.recordTypeId || undefined,
+    status: listParam(q.status),
+    statusCategory: listParam(q.statusCategory) as ListFilters["statusCategory"],
+    priority: listParam(q.priority) as ListFilters["priority"],
+    assigneeId: q.assigneeId || undefined,
+    teamId: q.teamId || undefined,
+    requesterId: q.requesterId || undefined,
+    sla: (q.sla as ListFilters["sla"]) || undefined,
+    createdAfter: q.createdAfter || undefined,
+    createdBefore: q.createdBefore || undefined,
+    q: q.q || undefined,
+    custom: parseCustomFilter(q.custom),
+    sort: (q.sort as Sort) || undefined,
+    limit: q.limit ? Number(q.limit) : undefined,
+    cursor: q.cursor || undefined,
+  };
+}
+
 export const apiRoutes = new Hono<AppEnv>()
+  // After a successful change, handle the events it queued (notifications, automation,
+  // webhooks) once the response is on its way; the cron sweep is the backstop.
+  .use(async (c, next) => {
+    await next();
+    const auth = c.get("auth");
+    if (c.req.method !== "GET" && auth && c.res.status < 400) {
+      await runAfterResponse(c, processTenantOutbox(workerDeps(c.get("deps"), c.get("sql"), c), auth.tenantId));
+    }
+  })
+
   .get("/me", (c) => {
     const auth = requireAuth(c);
     return c.json({
@@ -40,90 +112,281 @@ export const apiRoutes = new Hono<AppEnv>()
     });
   })
 
-  /** Projects → record types → active fields, for rendering forms and filters. */
+  /** Projects → record types → fields, workflow and layout, for rendering forms and boards. */
   .get("/config", async (c) => {
+    const projects = await inTenant(c, (tx, actor) => getCompiledConfig(tx, actor));
     const auth = requireAuth(c);
-    const projects = await withTenant(c.get("sql"), auth.tenantId, (tx) => getCompiledConfig(tx));
-    return c.json({ projects });
+    const settings = await getSettings(c.get("sql"), auth.tenantId);
+    return c.json({ projects, settings: { attachmentMaxMb: settings.attachmentMaxMb, timezone: settings.timezone } });
   })
 
   /** People for assignee and person-field pickers (staff only). */
   .get("/users", async (c) => {
-    const auth = requireRole(c, "admin", "agent");
-    const users = await withTenant(c.get("sql"), auth.tenantId, (tx) => listUsers(tx));
+    requireRole(c, "admin", "agent");
+    const users = await inTenant(c, (tx) => listUsers(tx));
     return c.json({ users: users.map(({ id, displayName, email, role }) => ({ id, displayName, email, role })) });
   })
 
+  .get("/teams", async (c) => {
+    requireRole(c, "admin", "agent");
+    const teams = await inTenant(c, (tx) => listTeams(tx));
+    return c.json({ teams });
+  })
+
+  // ---------------------------------------------------------------- records
+
   .get("/records", async (c) => {
-    const auth = requireAuth(c);
-    const q = c.req.query();
-    const filters: ListFilters = {
-      projectId: q.projectId || undefined,
-      recordTypeId: q.recordTypeId || undefined,
-      statusCategory: (q.statusCategory as ListFilters["statusCategory"]) || undefined,
-      assigneeId: q.assigneeId || undefined,
-      q: q.q || undefined,
-      custom: parseCustomFilter(q.custom),
-      limit: q.limit ? Number(q.limit) : undefined,
-      cursor: q.cursor || undefined,
-    };
-    if (filters.statusCategory && !["todo", "in_progress", "done"].includes(filters.statusCategory)) {
-      throw new AppError("bad_request", "statusCategory must be todo, in_progress or done");
-    }
-    const page = await withTenant(c.get("sql"), auth.tenantId, (tx) => listRecords(tx, actorOf(auth), filters));
-    return c.json(page);
+    const filters = filtersFromQuery(c.req.query());
+    return c.json(await inTenant(c, (tx, actor) => listRecords(tx, actor, filters)));
+  })
+
+  .get("/board", async (c) => {
+    const filters = filtersFromQuery(c.req.query());
+    return c.json(await inTenant(c, (tx, actor) => getBoard(tx, actor, filters)));
   })
 
   .post("/records", async (c) => {
-    const auth = requireAuth(c);
     const body = await readJson(c);
-    const record = await withTenant(c.get("sql"), auth.tenantId, (tx) => createRecord(tx, actorOf(auth), body));
+    const record = await inTenant(c, (tx, actor) => createRecord(tx, actor, body));
     return c.json({ record }, 201);
   })
 
-  .get("/records/:idOrKey", async (c) => {
-    const auth = requireAuth(c);
-    const record = await withTenant(c.get("sql"), auth.tenantId, (tx) =>
-      getRecord(tx, actorOf(auth), c.req.param("idOrKey")),
+  .post("/records/bulk", async (c) => {
+    const body = await readJson(c);
+    const result = await inTenant(c, (tx, actor) =>
+      bulkUpdate(tx, actor, body, (sp, a, record, key) => runTransition(sp, a, record, key)),
     );
-    return c.json({ record });
+    return c.json(result);
+  })
+
+  /** A record with what the detail page needs: transitions, SLA clocks, approvals, links. */
+  .get("/records/:idOrKey", async (c) => {
+    const data = await inTenant(c, async (tx, actor) => {
+      const record = await getRecord(tx, actor, c.req.param("idOrKey"));
+      const wf = await getWorkflow(tx, record.recordTypeId);
+      const transitions = record.pendingApprovalId
+        ? []
+        : availableTransitions(wf.definition, record.status, actor.role).map((t) => ({
+            key: t.key,
+            name: t.name,
+            to: t.to,
+            requiredFields: t.requiredFields,
+            needsApproval: Boolean(t.approval),
+          }));
+      return {
+        record,
+        transitions,
+        sla: await listClocks(tx, record.id),
+        approvals: await listRecordApprovals(tx, actor, record.id),
+        links: await listLinks(tx, actor, record.id),
+        watching: Boolean(
+          actor.userId &&
+            (await tx`select 1 from record_watchers where record_id = ${record.id} and user_id = ${actor.userId}`).length,
+        ),
+      };
+    });
+    return c.json(data);
   })
 
   .patch("/records/:idOrKey", async (c) => {
-    const auth = requireAuth(c);
     const body = await readJson(c);
-    const record = await withTenant(c.get("sql"), auth.tenantId, (tx) =>
-      updateRecord(tx, actorOf(auth), c.req.param("idOrKey"), body),
-    );
+    const record = await inTenant(c, (tx, actor) => updateRecord(tx, actor, c.req.param("idOrKey"), body));
     return c.json({ record });
   })
 
+  .post("/records/:idOrKey/transitions", async (c) => {
+    const body = await readJson(c);
+    const result = await inTenant(c, (tx, actor) => transitionRecord(tx, actor, c.req.param("idOrKey"), body));
+    return c.json(result);
+  })
+
   .delete("/records/:idOrKey", async (c) => {
-    const auth = requireAuth(c);
-    const record = await withTenant(c.get("sql"), auth.tenantId, (tx) =>
-      deleteRecord(tx, actorOf(auth), c.req.param("idOrKey")),
-    );
+    const record = await inTenant(c, (tx, actor) => deleteRecord(tx, actor, c.req.param("idOrKey")));
     return c.json({ record });
   })
 
   .post("/records/:idOrKey/restore", async (c) => {
-    const auth = requireAuth(c);
-    const record = await withTenant(c.get("sql"), auth.tenantId, (tx) =>
-      restoreRecord(tx, actorOf(auth), c.req.param("idOrKey")),
-    );
+    const record = await inTenant(c, (tx, actor) => restoreRecord(tx, actor, c.req.param("idOrKey")));
     return c.json({ record });
   })
 
   .get("/records/:idOrKey/events", async (c) => {
-    const auth = requireAuth(c);
-    const events = await withTenant(c.get("sql"), auth.tenantId, (tx) =>
-      listEvents(tx, actorOf(auth), c.req.param("idOrKey")),
-    );
+    const events = await inTenant(c, (tx, actor) => listEvents(tx, actor, c.req.param("idOrKey")));
     return c.json({ events });
   })
 
-  .get("/trash", async (c) => {
+  .post("/records/:idOrKey/events/:eventId/revert", async (c) => {
+    const body = await readJson(c);
+    const record = await inTenant(c, (tx, actor) =>
+      revertChange(tx, actor, c.req.param("idOrKey"), c.req.param("eventId"), body),
+    );
+    return c.json({ record });
+  })
+
+  // ---------------------------------------------------------------- comments and watchers
+
+  .get("/records/:idOrKey/comments", async (c) => {
+    const comments = await inTenant(c, (tx, actor) => listComments(tx, actor, c.req.param("idOrKey")));
+    return c.json({ comments });
+  })
+  .post("/records/:idOrKey/comments", async (c) => {
+    const body = await readJson(c);
+    const comment = await inTenant(c, (tx, actor) => createComment(tx, actor, c.req.param("idOrKey"), body));
+    return c.json({ comment }, 201);
+  })
+  .patch("/comments/:id", async (c) => {
+    const body = await readJson(c);
+    const comment = await inTenant(c, (tx, actor) => editComment(tx, actor, c.req.param("id"), body));
+    return c.json({ comment });
+  })
+  .delete("/comments/:id", async (c) => {
+    await inTenant(c, (tx, actor) => deleteComment(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
+  })
+  .post("/comments/:id/restore", async (c) => {
+    const comment = await inTenant(c, (tx, actor) => restoreComment(tx, actor, c.req.param("id")));
+    return c.json({ comment });
+  })
+
+  .get("/records/:idOrKey/watchers", async (c) => {
+    const watchers = await inTenant(c, (tx, actor) => listWatchers(tx, actor, c.req.param("idOrKey")));
+    return c.json({ watchers });
+  })
+  .post("/records/:idOrKey/watchers", async (c) => {
+    const body = await readJson(c);
+    await inTenant(c, (tx, actor) => setWatching(tx, actor, c.req.param("idOrKey"), body));
+    return c.json({ ok: true });
+  })
+
+  // ---------------------------------------------------------------- attachments
+
+  .get("/records/:idOrKey/attachments", async (c) => {
+    const attachments = await inTenant(c, (tx, actor) => listAttachments(tx, actor, c.req.param("idOrKey")));
+    return c.json({ attachments });
+  })
+  /**
+   * Upload one file as the raw request body. Needs the X-Tend-Upload: 1 header (a custom
+   * header cannot be sent cross-site without a CORS preflight); the file name goes in
+   * X-Filename, URI-encoded.
+   */
+  .post("/records/:idOrKey/attachments", async (c) => {
     const auth = requireAuth(c);
-    const records = await withTenant(c.get("sql"), auth.tenantId, (tx) => listTrash(tx, actorOf(auth)));
-    return c.json({ records });
-  });
+    const { blobs, replica } = c.get("deps");
+    if (!blobs) throw new AppError("bad_request", "File storage is not configured");
+    const settings = await getSettings(c.get("sql"), auth.tenantId);
+    // The size must be declared up front so an oversized body is refused before it is read.
+    const declared = Number(c.req.header("content-length") ?? "NaN");
+    if (!Number.isFinite(declared)) throw new AppError("bad_request", "Send the file with a Content-Length header");
+    if (declared > settings.attachmentMaxMb * 1024 * 1024) {
+      throw new AppError("bad_request", `Files can be at most ${settings.attachmentMaxMb} MB`);
+    }
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    const attachment = await uploadAttachment(
+      c.get("sql"),
+      actorOf(auth),
+      blobs,
+      c.req.param("idOrKey"),
+      {
+        filename: c.req.header("x-filename"),
+        contentType: c.req.header("content-type"),
+        bytes,
+        commentId: c.req.query("commentId") || null,
+      },
+      { replicate: Boolean(replica) },
+    );
+    return c.json({ attachment }, 201);
+  })
+  .get("/attachments/:id", async (c) => {
+    const { blobs } = c.get("deps");
+    if (!blobs) throw new AppError("bad_request", "File storage is not configured");
+    return inTenant(c, (tx, actor) => downloadAttachment(tx, actor, blobs, c.req.param("id"), c.req.query("inline") === "1"));
+  })
+  .delete("/attachments/:id", async (c) => {
+    await inTenant(c, (tx, actor) => deleteAttachment(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
+  })
+  .post("/attachments/:id/restore", async (c) => {
+    const attachment = await inTenant(c, (tx, actor) => restoreAttachment(tx, actor, c.req.param("id")));
+    return c.json({ attachment });
+  })
+
+  // ---------------------------------------------------------------- links
+
+  .post("/records/:idOrKey/links", async (c) => {
+    const body = await readJson(c);
+    const link = await inTenant(c, (tx, actor) => createLink(tx, actor, c.req.param("idOrKey"), body));
+    return c.json({ link }, 201);
+  })
+  .delete("/links/:id", async (c) => {
+    await inTenant(c, (tx, actor) => deleteLink(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
+  })
+
+  // ---------------------------------------------------------------- approvals
+
+  .get("/approvals", async (c) => {
+    const approvals = await inTenant(c, (tx, actor) => listMyApprovals(tx, actor));
+    return c.json({ approvals });
+  })
+  .post("/approvals/:id/decision", async (c) => {
+    const body = await readJson(c);
+    const approval = await inTenant(c, (tx, actor) => decideApproval(tx, actor, c.req.param("id"), body));
+    return c.json({ approval });
+  })
+  .post("/approvals/:id/cancel", async (c) => {
+    const approval = await inTenant(c, (tx, actor) => cancelApproval(tx, actor, c.req.param("id")));
+    return c.json({ approval });
+  })
+
+  // ---------------------------------------------------------------- saved views
+
+  .get("/views", async (c) => c.json({ views: await inTenant(c, (tx, actor) => listViews(tx, actor)) }))
+  .post("/views", async (c) => {
+    const body = await readJson(c);
+    return c.json({ view: await inTenant(c, (tx, actor) => createView(tx, actor, body)) }, 201);
+  })
+  .patch("/views/:id", async (c) => {
+    const body = await readJson(c);
+    return c.json({ view: await inTenant(c, (tx, actor) => updateView(tx, actor, c.req.param("id"), body)) });
+  })
+  .delete("/views/:id", async (c) => {
+    await inTenant(c, (tx, actor) => deleteView(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
+  })
+
+  // ---------------------------------------------------------------- notifications
+
+  .get("/notifications", async (c) => {
+    const unreadOnly = c.req.query("unread") === "1";
+    return c.json(await inTenant(c, (tx, actor) => listNotifications(tx, actor, { unreadOnly })));
+  })
+  .post("/notifications/read", async (c) => {
+    const body = await readJson(c);
+    await inTenant(c, (tx, actor) => markRead(tx, actor, body));
+    return c.json({ ok: true });
+  })
+  .get("/notification-prefs", async (c) => c.json({ prefs: await inTenant(c, (tx, actor) => getPrefs(tx, actor)) }))
+  .patch("/notification-prefs", async (c) => {
+    const body = await readJson(c);
+    return c.json({ prefs: await inTenant(c, (tx, actor) => updatePrefs(tx, actor, body)) });
+  })
+
+  // ---------------------------------------------------------------- trash (admins)
+
+  .get("/trash", async (c) => {
+    const data = await inTenant(c, async (tx, actor) => ({
+      records: await listTrash(tx, actor),
+      comments: await listDeletedComments(tx, actor),
+      attachments: await listDeletedAttachments(tx, actor),
+    }));
+    return c.json(data);
+  })
+  .delete("/trash/records/:id", async (c) => {
+    const auth = requireRole(c, "admin");
+    const settings = await getSettings(c.get("sql"), auth.tenantId);
+    await inTenant(c, (tx, actor) =>
+      purgeRecord(tx, actor, c.req.param("id"), { replicaRetentionDays: settings.trashRetentionDays }),
+    );
+    return c.json({ ok: true });
+  })
+;

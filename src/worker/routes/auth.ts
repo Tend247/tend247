@@ -10,6 +10,8 @@ import { finishOidc, startOidc, type OidcIdentity } from "../auth/oidc.ts";
 import type { OidcConfig } from "../config.ts";
 import { findUserByEmail, insertUser } from "../users/service.ts";
 import { AppError, invalid } from "../lib/errors.ts";
+import { decideByToken, peekApprovalToken } from "../approvals/service.ts";
+import { processTenantOutbox, workerDeps } from "../jobs/runner.ts";
 import { isUuid, randomToken, sha256Hex, signPayload, verifyPayload } from "../lib/crypto.ts";
 
 const OIDC_COOKIE = "t247_oidc";
@@ -62,6 +64,34 @@ if(!w||!t){msg.textContent="This sign-in link is incomplete. Request a new one."
 go&&go.addEventListener("click",async()=>{go.disabled=true;const r=await fetch("/auth/magic/verify",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({w,t})});
 if(r.ok){location.replace("/app");}else{msg.textContent="That link has expired or was already used. Request a new one.";go.remove();}});
 </script></body></html>`;
+
+// Emailed approval links work the same way: the one-time token stays in the fragment, and the
+// decision is a POST from this page, so a mail scanner opening the link decides nothing.
+const APPROVAL_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Approval · Tend 24/7</title><style>body{font-family:system-ui,sans-serif;background:#101317;color:#e7e9ec;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:30rem;padding:2rem}h1{font-size:1.4rem}p{color:#9aa3ae}textarea{width:100%;box-sizing:border-box;min-height:5rem;background:#181c22;color:inherit;border:1px solid #2b313a;border-radius:8px;padding:.6rem;font:inherit}.row{display:flex;gap:.6rem;margin-top:1rem}button{font:inherit;font-weight:700;padding:.75rem 1.2rem;border-radius:8px;border:0;cursor:pointer}#ok{background:#f2a33a;color:#1c1206}#no{background:#2b313a;color:#e7e9ec}</style></head>
+<body><main><h1 id="title">Approval request</h1><p id="msg">Loading…</p><div id="form" hidden><textarea id="note" placeholder="Note (optional)" maxlength="5000"></textarea>
+<div class="row"><button id="ok">Approve</button><button id="no">Reject</button></div></div></main>
+<script>
+const token=location.hash.slice(1);history.replaceState(null,"",location.pathname);
+const $=(id)=>document.getElementById(id);
+const post=(path,body)=>fetch(path,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+(async()=>{if(!token){$("msg").textContent="This approval link is incomplete.";return;}
+const r=await post("/auth/approval/peek",{token});if(!r.ok){$("msg").textContent="This link has expired or was already used. Open Tend 24/7 to see the request.";return;}
+const d=await r.json();$("title").textContent=d.record.key+": "+d.record.title;
+if(d.status!=="pending"){$("msg").textContent="This request has already been decided.";return;}
+$("msg").textContent=(d.requestedByName||"Someone")+" asks you to approve \u201c"+d.transitionName+"\u201d.";$("form").hidden=false;
+const decide=async(decision)=>{$("ok").disabled=$("no").disabled=true;const note=$("note").value.trim();
+const res=await post("/auth/approval/decide",{token,decision,...(note?{comment:note}:{})});$("form").hidden=true;
+$("msg").textContent=res.ok?(decision==="approve"?"Approved. Thank you.":"Rejected. Thank you."):"That did not work: the link may have expired or the request was already decided.";};
+$("ok").onclick=()=>decide("approve");$("no").onclick=()=>decide("reject");})();
+</script></body></html>`;
+
+const tokenBody = z.object({ token: z.string().min(40).max(200) });
+const decideBody = z.object({
+  token: z.string().min(40).max(200),
+  decision: z.enum(["approve", "reject"]),
+  comment: z.string().trim().min(1).max(5000).optional(),
+});
 
 export const authRoutes = new Hono<AppEnv>()
   /** What the sign-in page should offer. */
@@ -228,6 +258,19 @@ export const authRoutes = new Hono<AppEnv>()
       console.warn("OIDC sign-in failed:", (err as Error).message);
       return c.redirect("/signin?error=sso_failed");
     }
+  })
+
+  .get("/approval", (c) => c.html(APPROVAL_PAGE))
+  .post("/approval/peek", async (c) => {
+    const { token } = parse(tokenBody, await readJson(c));
+    return c.json(await peekApprovalToken(c.get("sql"), token));
+  })
+  .post("/approval/decide", async (c) => {
+    const { token, ...decision } = parse(decideBody, await readJson(c));
+    const approval = await decideByToken(c.get("sql"), token, decision);
+    const tenantId = token.split(".")[0]!.toLowerCase();
+    await runAfterResponse(c, processTenantOutbox(workerDeps(c.get("deps"), c.get("sql"), c), tenantId));
+    return c.json({ status: approval.status });
   })
 
   .post("/logout", async (c) => {

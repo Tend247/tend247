@@ -26,15 +26,34 @@
       "localConnectionString": "postgres://tend247_app:app_dev_pw@127.0.0.1:54329/tend247_dev"
     }
   ],
+  // Attachments (create with: npx wrangler r2 bucket create tend247-attachments).
+  "r2_buckets": [
+    { "binding": "ATTACHMENTS", "bucket_name": "tend247-attachments" }
+    // Optional: a replica of every attachment, and the nightly export destination. Put
+    // BACKUPS in a bucket another Cloudflare account controls if you can.
+    // { "binding": "ATTACHMENTS_REPLICA", "bucket_name": "tend247-attachments-replica" },
+    // { "binding": "BACKUPS", "bucket_name": "tend247-backups" }
+  ],
+  // Optional: Cloudflare Email Service for outbound mail (set TEND247_EMAIL_PROVIDER=cloudflare).
+  // "send_email": [{ "name": "EMAIL" }],
+  // Every minute: deliver queued events, fire SLA and retry timers, run nightly jobs.
+  "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "TEND247_DEV_LOGIN": "false",
     "TEND247_OIDC_AUTO_PROVISION": "off",
     "TEND247_REQUESTER_DOMAINS": "",
     // Only the project's own site (tend247.com) shows the marketing pages at /.
     "TEND247_PUBLIC_SITE": "false",
-    "TEND247_REPO_URL": ""
+    "TEND247_REPO_URL": "",
+    // none | cloudflare | postmark | resend (postmark/resend need the TEND247_EMAIL_API_KEY secret)
+    "TEND247_EMAIL_PROVIDER": "none",
+    "TEND247_EMAIL_FROM": "",
+    // Domain routed to this Worker by Cloudflare Email Routing (queue addresses and replies).
+    "TEND247_INBOUND_DOMAIN": ""
   }
   // Secrets (set with `npx wrangler secret put <NAME>`):
   //   TEND247_SESSION_SECRET      at least 32 random characters
   //   TEND247_OIDC_CLIENT_SECRET  when OIDC sign-in is configured
+  //   TEND247_EMAIL_API_KEY       Postmark server token or Resend API key
+  //   TEND247_BACKUP_ENCRYPTION_KEY  32 random bytes, base64 (openssl rand -base64 32)
 }

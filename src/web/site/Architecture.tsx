@@ -15,7 +15,7 @@ const steps = [
   ["Who and where", "The session cookie names the workspace and the person; roles decide what they may do."],
   ["Scoped transaction", "The Worker opens a transaction and sets the workspace; row-level security filters every query."],
   ["Change, history, event", "The change, its history entry and an outbox event commit together, or not at all."],
-  ["Work happens later", "Queues and Workflows deliver notifications, run automation and keep SLA timers (v0.3)."],
+  ["Work happens next", "Right after the response, and on a one-minute cron, the Worker drains the outbox: notifications, automation, emails, SLA timers."],
 ];
 
 const stack = [
@@ -23,19 +23,20 @@ const stack = [
   ["Web app", "React and Vite, served as Workers static assets"],
   ["Database", "Postgres through Hyperdrive: Neon, Supabase or PlanetScale"],
   ["Files", "R2, with a replica bucket for recovery"],
-  ["Live updates", "Durable Objects with WebSocket hibernation"],
-  ["Background work", "Queues, Workflows, Cron Triggers"],
-  ["Email", "Email Routing in; Email Sending out, Postmark or Resend as fallback"],
+  ["Background work", "Outbox and timers in Postgres, drained after each response and by a one-minute Cron Trigger"],
+  ["Email", "Email Routing in; Cloudflare Email Sending, Postmark or Resend out"],
+  ["Backups", "Point-in-time recovery at the Postgres host, plus a nightly AES-GCM export to R2"],
+  ["Live updates", "Durable Objects with WebSocket hibernation (1.0)"],
   ["Sign-in", "Your OIDC provider for staff; one-time email links for requesters"],
 ];
 
 type St = "shipped" | "partial" | "planned";
 const requirements: { group: string; ids: string; status: St; items: string[] }[] = [
-  { group: "Records and configuration", ids: "FR-01 to FR-05", status: "partial", items: ["Records with keys and custom fields", "Ten field types with validation", "Workflows, layouts and templates"] },
-  { group: "Work routing", ids: "FR-06 to FR-09", status: "planned", items: ["Teams, queues, round-robin", "Automation rules", "Approvals and SLAs"] },
-  { group: "Collaboration", ids: "FR-10 to FR-13", status: "planned", items: ["Public and internal comments", "Attachments", "Email threading and notifications"] },
-  { group: "Finding work", ids: "FR-14 to FR-16", status: "partial", items: ["Filters and full-text search", "Saved views and boards", "Dashboards"] },
-  { group: "Access and audit", ids: "FR-17 to FR-19", status: "partial", items: ["Admin, agent and requester roles", "Append-only audit trail", "SSO and email-link sign-in"] },
+  { group: "Records and configuration", ids: "FR-01 to FR-05", status: "partial", items: ["Records with keys and custom fields", "Versioned workflows and layouts", "Starter templates (1.0)"] },
+  { group: "Work routing", ids: "FR-06 to FR-09", status: "shipped", items: ["Teams, queues, round-robin", "Automation rules", "Approvals and business-hours SLAs"] },
+  { group: "Collaboration", ids: "FR-10 to FR-13", status: "shipped", items: ["Public and internal comments, mentions", "Attachments", "Email threading and notifications"] },
+  { group: "Finding work", ids: "FR-14 to FR-16", status: "partial", items: ["Filters, saved views, boards, bulk edit", "Search across comments", "Dashboards (1.0)"] },
+  { group: "Access and audit", ids: "FR-17 to FR-19", status: "shipped", items: ["Roles plus restricted projects", "Append-only audit trail", "SSO and email-link sign-in"] },
   { group: "Integration", ids: "FR-20 to FR-24", status: "planned", items: ["REST API with scoped tokens", "Signed webhooks", "Requester portal, CSV import"] },
   { group: "Self-hosting", ids: "S-01 to S-10", status: "partial", items: ["Migrations and locked-down app role", "Three Postgres providers", "One-command installer"] },
   { group: "Backup and recovery", ids: "B-01 to B-10", status: "partial", items: ["Trash with admin restore", "Nightly export and replica", "Scheduled restore test"] },
