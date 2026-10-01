@@ -1,0 +1,50 @@
+# Tend 24/7 CI: typecheck, license policy, tests against real Postgres, build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_superuser_pw
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGPASSWORD: ci_superuser_pw
+      TEND247_TEST_DB_OWNER_URL: postgres://tend247_owner:ci_owner_pw@localhost:5432/tend247_test
+      TEND247_TEST_DB_APP_URL: postgres://tend247_app:ci_app_pw@localhost:5432/tend247_test
+      TEND247_TEST_DB_SUPERUSER_URL: postgres://postgres:ci_superuser_pw@localhost:5432/tend247_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Create database roles
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role tend247_owner login password 'ci_owner_pw' createrole;
+          create role tend247_app login password 'ci_app_pw' nobypassrls;
+          create database tend247_test owner tend247_owner;
+          SQL
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run licenses:check
+      - run: npm test
+      - run: npm run build

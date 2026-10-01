@@ -65,7 +65,7 @@ npm run typecheck
 npm run licenses:check # fails if a production dependency is not Apache-2.0 compatible
 ```
 
-Tests run in Node against a real Postgres database, connecting as both the owner and the app role. Defaults point at `127.0.0.1:54329/tend247_test`; override with `TEND247_TEST_DB_OWNER_URL` and `TEND247_TEST_DB_APP_URL`. The suite drops and recreates the test schema on every run, so never point it at real data.
+CI (GitHub Actions, `.github/workflows/ci.yml`; a GitLab equivalent is in `.gitlab-ci.yml`) runs all four on every push and pull request. Tests run in Node against a real Postgres database, connecting as both the owner and the app role. Defaults point at `127.0.0.1:54329/tend247_test`; override with `TEND247_TEST_DB_OWNER_URL` and `TEND247_TEST_DB_APP_URL`. The suite drops and recreates the test schema on every run, so never point it at real data.
 
 ## Deploying
 
