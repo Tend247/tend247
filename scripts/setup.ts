@@ -28,12 +28,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { loadDotEnv } from "./lib/dotenv.ts";
 import { parseArgs, str } from "./lib/args.ts";
+import { normalizeConnectionString, readCaFile } from "../src/worker/db/connstr.ts";
 
 // ---------------------------------------------------------------- pure helpers (tested)
 
-/** The app role's connection string: the owner's URL with another user and password. */
+/**
+ * The app role's connection string: the owner's URL with another user and password, without
+ * libpq-only client options (Hyperdrive and postgres.js read sslmode, not sslrootcert).
+ */
 export function appUrlFrom(ownerUrl: string, role: string, password: string): string {
-  const u = new URL(ownerUrl);
+  const u = new URL(normalizeConnectionString(ownerUrl).url);
   u.username = encodeURIComponent(role);
   u.password = encodeURIComponent(password);
   return u.toString();
@@ -203,7 +207,12 @@ async function main(): Promise<void> {
     const appPassword = process.env.TEND247_DB_APP_PASSWORD || base64url(random(24));
     await migrate({ ownerUrl, migrationsDir: join(root, "migrations"), appRole: "tend247_app", appPassword, log: (l) => console.log(`   ${l}`) });
     const postgres = (await import("postgres")).default;
-    const owner = postgres(ownerUrl, { max: 1, onnotice: () => {} });
+    const ownerConn = normalizeConnectionString(ownerUrl);
+    const owner = postgres(ownerConn.url, {
+      max: 1,
+      onnotice: () => {},
+      ...(ownerConn.caFile ? { ssl: { ca: readCaFile(ownerConn.caFile), rejectUnauthorized: true } } : {}),
+    });
     try {
       // migrate() only sets a password when it creates the role; re-key an existing one so the
       // URL below is right.

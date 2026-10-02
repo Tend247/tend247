@@ -40,7 +40,7 @@ Gates:
 - Phase 3: `test/gate-launch.test.ts`. Two template-built functions are worked end to end through the portal and the agent app, with an integration on a scoped token, a read-only phone and a workspace moved by bundle; a stranger gets a demo sandbox in seconds.
 - `test/access.test.ts` covers API tokens and the adversarial cases for phone pairing.
 
-254 tests in all.
+260 tests in all.
 
 ## Quick start (local)
 

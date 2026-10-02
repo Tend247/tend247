@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import postgres from "postgres";
+import { normalizeConnectionString, readCaFile } from "../../src/worker/db/connstr.ts";
 
 export interface MigrateOptions {
   ownerUrl: string;
@@ -22,7 +23,13 @@ const LOCK_KEY = 7247_0001;
 
 export async function migrate(opts: MigrateOptions): Promise<MigrateResult> {
   const log = opts.log ?? (() => {});
-  const sql = postgres(opts.ownerUrl, { max: 1, onnotice: () => {} });
+  const conn = normalizeConnectionString(opts.ownerUrl);
+  if (conn.dropped.length) log(`ignoring connection options postgres.js does not use: ${conn.dropped.join(", ")}`);
+  const sql = postgres(conn.url, {
+    max: 1,
+    onnotice: () => {},
+    ...(conn.caFile ? { ssl: { ca: readCaFile(conn.caFile), rejectUnauthorized: true } } : {}),
+  });
   const result: MigrateResult = { applied: [], skipped: [] };
   try {
     await sql`select pg_advisory_lock(${LOCK_KEY})`;

@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { normalizeConnectionString, readCaFile } from "./connstr.ts";
 
 export type Sql = postgres.Sql<{}>;
 export type Tx = postgres.TransactionSql<{}>;
@@ -11,7 +12,10 @@ export type Db = Sql | Tx;
  * keys inside jsonb values, which would mangle custom-field keys such as `invoice_amount`.
  */
 export function createSql(connectionString: string, options: { max?: number } = {}): Sql {
-  return postgres(connectionString, {
+  // Accept libpq-style URLs from provider dashboards (e.g. ?sslmode=verify-full&sslrootcert=system).
+  const conn = normalizeConnectionString(connectionString);
+  return postgres(conn.url, {
+    ...(conn.caFile ? { ssl: { ca: readCaFile(conn.caFile), rejectUnauthorized: true } } : {}),
     max: options.max ?? 5,
     fetch_types: false,
     prepare: true,

@@ -2,6 +2,11 @@
 
 All notable changes. Versions follow [semantic versioning](https://semver.org/); database migrations are forward-only and run with `npm run db:migrate` before you deploy.
 
+## Unreleased
+
+### Fixed
+- Scripts (`db:migrate`, `db:seed`, `setup`, bundles, restore check) accept connection strings copied from provider dashboards. libpq-only options such as `sslrootcert=system` used to reach the server and fail with "unrecognized configuration parameter". `sslrootcert=system` now means `sslmode=verify-full`, `sslrootcert=<file>` trusts that CA, and other client-only options are dropped with a note. The Hyperdrive connection string made by `npm run setup` leaves them out too.
+
 ## 1.0.0-rc.2 (2026-10-02)
 
 Agile planning, custom templates and a guided setup. **Migration:** `0004_agile_and_templates.sql`.

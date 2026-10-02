@@ -81,6 +81,7 @@ To run it without prompts (for example from a script), pass flags and keep secre
 
 ```bash
 export TEND247_DB_OWNER_URL='postgres://tend247_owner:…@host/tend247?sslmode=verify-full'
+# A URL copied from your provider with &sslrootcert=system also works: it means verify-full.
 export TEND247_OIDC_CLIENT_SECRET='…'
 npm run setup -- --yes --workspace-name "Acme Foods" --admin-email it@acme.com \
   --sign-in oidc --oidc-issuer https://login.microsoftonline.com/<tenant>/v2.0 --oidc-client-id <id> --oidc-domains acme.com \
