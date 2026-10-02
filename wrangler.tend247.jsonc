@@ -28,7 +28,7 @@
     {
       // npx wrangler hyperdrive create tend247-demo-db --connection-string="$DEMO_APP_URL" --caching-disabled
       "binding": "HYPERDRIVE",
-      "id": "00000000000000000000000000000000",
+      "id": "46bd3f9fa84f4330b561464b9623223e",
       "localConnectionString": "postgres://tend247_app:app_dev_pw@127.0.0.1:54329/tend247_dev"
     }
   ],
