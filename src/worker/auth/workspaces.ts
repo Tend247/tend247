@@ -10,13 +10,15 @@ export interface Workspace {
 
 /**
  * Find the workspace to sign in to. A deployment belongs to one company, so without a slug
- * the oldest non-demo workspace is used. Expired workspaces are never returned.
+ * the oldest non-demo workspace is used. Expired workspaces, and the demo's golden copy and
+ * unclaimed pool, are never returned.
  */
 export async function resolveWorkspace(sql: Db, slug?: string | null): Promise<Workspace | null> {
   const rows = slug
     ? await sql<Workspace[]>`
         select id, slug, name, demo, expires_at from tenants
-        where slug = ${slug} and (expires_at is null or expires_at > now())`
+        where slug = ${slug} and (expires_at is null or expires_at > now())
+          and (demo_state is null or demo_state = 'claimed')`
     : await sql<Workspace[]>`
         select id, slug, name, demo, expires_at from tenants
         where not demo and (expires_at is null or expires_at > now())

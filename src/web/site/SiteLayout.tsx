@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { useSession } from "../session.tsx";
-import { SITE_ONLY } from "../siteOnly.ts";
 
 export function SiteLayout({ children }: { children: ReactNode }) {
   const { site, me } = useSession();
   const repo = site?.repoUrl;
+  const demo = site?.demo.enabled ?? false;
   return (
     <div className="site">
       <header className="site-nav">
@@ -18,19 +18,19 @@ export function SiteLayout({ children }: { children: ReactNode }) {
           <Link to="/roadmap">Roadmap</Link>
           <Link to="/architecture">Architecture</Link>
           <Link to="/#self-host">Self-host</Link>
-          {SITE_ONLY ? (
-            repo && (
-              <a href={repo} className="nav-button">
-                GitHub
-              </a>
-            )
+          {repo && <a href={repo}>GitHub</a>}
+          {me ? (
+            <Link to={me.role === "requester" ? "/portal" : "/app"} className="nav-button">
+              {me.demo ? "Back to your demo" : "Open app"}
+            </Link>
+          ) : demo ? (
+            <Link to="/#top" className="nav-button">
+              Try the demo
+            </Link>
           ) : (
-            <>
-              {repo && <a href={repo}>Source</a>}
-              <Link to={me ? "/app" : "/signin"} className="nav-button">
-                {me ? "Open app" : "Sign in"}
-              </Link>
-            </>
+            <Link to="/signin" className="nav-button">
+              Sign in
+            </Link>
           )}
         </nav>
       </header>
@@ -46,7 +46,7 @@ export function SiteLayout({ children }: { children: ReactNode }) {
           <Link to="/roadmap">Roadmap</Link>
           <Link to="/architecture">Architecture</Link>
           {repo && <a href={repo}>Source</a>}
-          {!SITE_ONLY && <Link to="/signin">Sign in</Link>}
+          {!demo && <Link to="/signin">Sign in</Link>}
         </nav>
       </footer>
     </div>

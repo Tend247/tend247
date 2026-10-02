@@ -6,7 +6,7 @@ import { FieldInput } from "../components/FieldInput.tsx";
 import { ErrorText } from "../components/ui.tsx";
 import type { Priority, WorkRecord } from "../types.ts";
 
-export function RecordNew() {
+export function RecordNew({ linkTo = (key) => `/app/records/${key}`, heading = "New record" }: { linkTo?: (key: string) => string; heading?: string } = {}) {
   const { projects, people, teams, me } = useSession();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -45,7 +45,7 @@ export function RecordNew() {
         ...(staff ? { assigneeId: assigneeId || null, ...(teamId ? { teamId } : {}) } : {}),
         custom: values,
       });
-      navigate(`/app/records/${record.key}`);
+      navigate(linkTo(record.key));
     } catch (err) {
       setErrors({ _: (err as Error).message, ...issuesByField(err) });
     } finally {
@@ -134,7 +134,7 @@ export function RecordNew() {
 
   return (
     <section className="narrow">
-      <h1>New record</h1>
+      <h1>{heading}</h1>
       <form onSubmit={submit} className="stack">
         <label className="field">
           Type

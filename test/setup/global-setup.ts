@@ -13,5 +13,11 @@ export default async function setup(): Promise<void> {
     await sql.end();
   }
   const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  await migrate({ ownerUrl: OWNER_URL, migrationsDir: join(root, "migrations"), appRole: APP_ROLE });
+  await migrate({
+    ownerUrl: OWNER_URL,
+    migrationsDir: join(root, "migrations"),
+    appRole: APP_ROLE,
+    // CI against a hosted Postgres (PlanetScale) creates the app role on first run.
+    appPassword: process.env.TEND247_DB_APP_PASSWORD || undefined,
+  });
 }

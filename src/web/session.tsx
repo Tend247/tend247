@@ -9,6 +9,8 @@ export interface SiteConfig {
   magicLinks: boolean;
   publicSite: boolean;
   repoUrl: string | null;
+  demo: { enabled: boolean; turnstileSiteKey: string | null };
+  databaseReady: boolean;
 }
 
 interface Session {
@@ -83,23 +85,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       {children}
     </SessionContext.Provider>
   );
-}
-
-/** A fixed, signed-out session for the static marketing site (no API behind it). */
-export function StaticSiteProvider({ repoUrl, children }: { repoUrl: string | null; children: ReactNode }) {
-  const value: Session = {
-    site: { workspace: null, devLogin: false, oidc: false, magicLinks: false, publicSite: true, repoUrl },
-    me: null,
-    projects: [],
-    people: [],
-    teams: [],
-    settings: { attachmentMaxMb: 25, timezone: "UTC" },
-    unread: 0,
-    loading: false,
-    reload: async () => {},
-    refreshUnread: async () => {},
-  };
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
 export function useSession(): Session {

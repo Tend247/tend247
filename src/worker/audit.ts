@@ -11,7 +11,7 @@ export interface Actor {
   userId: string | null;
   role: Role;
   /** Where the change came from; stored on records and comments it creates. */
-  via?: "app" | "email" | "automation" | "api";
+  via?: "app" | "email" | "automation" | "api" | "import";
   /**
    * Automation provenance: how many rule runs led here and which rules ran. Events carry it
    * so a rule never re-triggers itself and chains stop at a fixed depth.

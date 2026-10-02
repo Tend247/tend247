@@ -19,6 +19,10 @@ export interface Me {
   displayName: string;
   role: Role;
   workspaceId: string;
+  /** A paired phone: read-only access. */
+  readOnly: boolean;
+  /** Signed in to a public demo sandbox. */
+  demo: boolean;
 }
 
 export interface Choice {

@@ -39,12 +39,13 @@ export const baseConfig: AppConfig = {
   repoUrl: null,
   email: { provider: "none", from: "Tend 24/7 <tend@fernhollow.test>", apiKey: null, inboundDomain: "help.fernhollow.test", inboundAuthservId: "mx.cloudflare.net" },
   backup: { encryptionKey: null, dailyKeep: 14, monthlyKeep: 12 },
+  demo: { enabled: false, turnstileSiteKey: null, turnstileSecret: null, poolSize: 2, hours: 24, maxRecords: 300, maxSandboxes: 1000 },
 };
 
 export function makeApp(
   sql: Sql,
   opts: { config?: Partial<AppConfig>; email?: MemoryEmailSender; oidcFetch?: FetchLike } & Partial<
-    Pick<AppDeps, "blobs" | "replica" | "backups" | "webhookFetch" | "now">
+    Pick<AppDeps, "blobs" | "replica" | "backups" | "webhookFetch" | "now" | "rateLimits" | "verifyTurnstile">
   > = {},
 ) {
   const email = opts.email ?? new MemoryEmailSender();
@@ -58,6 +59,8 @@ export function makeApp(
     backups: opts.backups,
     webhookFetch: opts.webhookFetch,
     now: opts.now,
+    rateLimits: opts.rateLimits,
+    verifyTurnstile: opts.verifyTurnstile,
   };
   const app = createApp(deps);
   return { app, email, deps, worker: () => workerDeps(deps, sql) };

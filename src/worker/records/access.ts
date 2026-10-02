@@ -31,7 +31,7 @@ export interface RecordRow {
   pendingApprovalId: string | null;
   firstRespondedAt: Date | null;
   resolvedAt: Date | null;
-  via: "app" | "email" | "automation" | "api";
+  via: "app" | "email" | "automation" | "api" | "import";
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;

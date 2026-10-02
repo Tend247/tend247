@@ -53,6 +53,11 @@ export async function insertUser(
   tenantId: string,
   input: { email: string; displayName: string; role: Role; oidcSubject?: string | null },
 ): Promise<User> {
+  const [quota] = await tx<{ maxUsers: number | null }[]>`select max_users from tenants where id = ${tenantId}`;
+  if (quota?.maxUsers) {
+    const [n] = await tx<{ n: number }[]>`select count(*)::int as n from users`;
+    if ((n?.n ?? 0) >= quota.maxUsers) throw new AppError("forbidden", `This workspace holds up to ${quota.maxUsers} people`);
+  }
   const [u] = await tx<User[]>`
     insert into users (tenant_id, email, display_name, role, oidc_subject)
     values (${tenantId}, ${input.email.toLowerCase()}, ${input.displayName}, ${input.role}, ${input.oidcSubject ?? null})

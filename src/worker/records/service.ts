@@ -73,12 +73,23 @@ export { event as recordEvent };
 
 // ---------------------------------------------------------------- create
 
+/** Workspaces with a record quota (demo sandboxes) refuse records past it, however they arrive. */
+async function assertRecordQuota(tx: Tx, tenantId: string): Promise<void> {
+  const [t] = await tx<{ maxRecords: number | null }[]>`select max_records from tenants where id = ${tenantId}`;
+  if (!t?.maxRecords) return;
+  const [n] = await tx<{ n: number }[]>`select count(*)::int as n from records`;
+  if ((n?.n ?? 0) >= t.maxRecords) {
+    throw new AppError("forbidden", `This workspace holds up to ${t.maxRecords} records${t.maxRecords < 10_000 ? ". In the demo, use Reset to start over" : ""}.`);
+  }
+}
+
 export async function createRecord(tx: Tx, actor: Actor, input: unknown): Promise<RecordRow> {
   const data = parse(createSchema, input);
   const recordType = await getRecordType(tx, data.recordTypeId);
   assertNotArchived(recordType, "This record type");
   const project = await getProject(tx, recordType.projectId);
   assertNotArchived(project, "This project");
+  await assertRecordQuota(tx, actor.tenantId);
   const staff = isStaff(actor);
   if (!staff && !project.requesterAccess) throw forbidden("This project does not take requests");
 

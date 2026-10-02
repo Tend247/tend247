@@ -5,6 +5,8 @@ import { useSession } from "../session.tsx";
 
 interface AuthConfig {
   workspace: { slug: string; name: string; demo: boolean } | null;
+  demo?: { enabled: boolean };
+  databaseReady?: boolean;
   devLogin: boolean;
   oidc: boolean;
   magicLinks: boolean;
@@ -51,7 +53,21 @@ export function SignIn() {
   }
 
   if (!cfg) return <div className="center muted">{message ?? "Loading…"}</div>;
-  if (!cfg.workspace) return <div className="center">No workspace is set up yet. Run the seed script or the installer.</div>;
+  if (!cfg.workspace) {
+    return (
+      <div className="center">
+        {cfg.demo?.enabled ? (
+          <p>
+            This is the public demo site: there is nothing to sign in to. <a href="/">Try the live demo</a> instead.
+          </p>
+        ) : cfg.databaseReady === false ? (
+          <p>Tend 24/7 cannot reach its database right now. An administrator can find details in the server logs.</p>
+        ) : (
+          <p>No workspace is set up yet. Run the seed script or the installer.</p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="signin">

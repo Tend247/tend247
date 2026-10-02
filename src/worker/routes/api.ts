@@ -51,6 +51,9 @@ import { listNotifications, markRead, getPrefs, updatePrefs } from "../notificat
 import { processTenantOutbox, workerDeps } from "../jobs/runner.ts";
 import { AppError } from "../lib/errors.ts";
 import { listParam } from "../lib/validate.ts";
+import { createToken, listTokens, revokeToken } from "../tokens/service.ts";
+import { getDashboard } from "../dashboard/service.ts";
+import { bump, DEMO_ATTACHMENT_MAX_MB } from "../demo/service.ts";
 
 /** Run `fn` in the signed-in person's workspace. */
 function inTenant<T>(c: Ctx, fn: (tx: Tx, actor: Actor) => Promise<T>): Promise<T> {
@@ -109,6 +112,8 @@ export const apiRoutes = new Hono<AppEnv>()
       displayName: auth.displayName,
       role: auth.role,
       workspaceId: auth.tenantId,
+      readOnly: auth.readOnly,
+      demo: auth.demo,
     });
   })
 
@@ -147,7 +152,9 @@ export const apiRoutes = new Hono<AppEnv>()
 
   .post("/records", async (c) => {
     const body = await readJson(c);
+    const auth = requireAuth(c);
     const record = await inTenant(c, (tx, actor) => createRecord(tx, actor, body));
+    if (auth.demo) await bump(c.get("sql"), "demo.requests");
     return c.json({ record }, 201);
   })
 
@@ -274,11 +281,12 @@ export const apiRoutes = new Hono<AppEnv>()
     const { blobs, replica } = c.get("deps");
     if (!blobs) throw new AppError("bad_request", "File storage is not configured");
     const settings = await getSettings(c.get("sql"), auth.tenantId);
+    const maxMb = auth.demo ? Math.min(DEMO_ATTACHMENT_MAX_MB, settings.attachmentMaxMb) : settings.attachmentMaxMb;
     // The size must be declared up front so an oversized body is refused before it is read.
     const declared = Number(c.req.header("content-length") ?? "NaN");
     if (!Number.isFinite(declared)) throw new AppError("bad_request", "Send the file with a Content-Length header");
-    if (declared > settings.attachmentMaxMb * 1024 * 1024) {
-      throw new AppError("bad_request", `Files can be at most ${settings.attachmentMaxMb} MB`);
+    if (declared > maxMb * 1024 * 1024) {
+      throw new AppError("bad_request", `Files can be at most ${maxMb} MB${auth.demo ? " in the demo" : ""}`);
     }
     const bytes = new Uint8Array(await c.req.arrayBuffer());
     const attachment = await uploadAttachment(
@@ -369,6 +377,36 @@ export const apiRoutes = new Hono<AppEnv>()
   .patch("/notification-prefs", async (c) => {
     const body = await readJson(c);
     return c.json({ prefs: await inTenant(c, (tx, actor) => updatePrefs(tx, actor, body)) });
+  })
+
+  // ---------------------------------------------------------------- dashboard
+
+  .get("/dashboard", async (c) => {
+    const auth = requireAuth(c);
+    const settings = await getSettings(c.get("sql"), auth.tenantId);
+    const days = Number(c.req.query("days") ?? 30);
+    return c.json(
+      await inTenant(c, (tx, actor) =>
+        getDashboard(tx, actor, { projectId: c.req.query("projectId"), days: Number.isFinite(days) ? days : 30, timezone: settings.timezone }),
+      ),
+    );
+  })
+
+  // ---------------------------------------------------------------- API tokens (signed-in people only)
+
+  .get("/tokens", async (c) => {
+    const all = c.req.query("all") === "1";
+    return c.json({ tokens: await inTenant(c, (tx, actor) => listTokens(tx, actor, { all })) });
+  })
+  .post("/tokens", async (c) => {
+    const body = await readJson(c);
+    const auth = requireAuth(c);
+    const created = await inTenant(c, (tx, actor) => createToken(tx, actor, body, { demo: auth.demo, readOnly: auth.readOnly || auth.kind !== "session" }));
+    return c.json(created, 201);
+  })
+  .delete("/tokens/:id", async (c) => {
+    await inTenant(c, (tx, actor) => revokeToken(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
   })
 
   // ---------------------------------------------------------------- trash (admins)

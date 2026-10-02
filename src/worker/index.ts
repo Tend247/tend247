@@ -17,9 +17,17 @@ import { R2BlobStore } from "./attachments/blobs.ts";
 import { sweep, workerDeps } from "./jobs/runner.ts";
 import { handleInboundEmail } from "./email/inbound.ts";
 
+interface RateLimitBinding {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
 export interface Env {
   HYPERDRIVE: Hyperdrive;
   ASSETS: Fetcher;
+  /** Workers Rate Limiting bindings (optional; see wrangler.jsonc). */
+  API_RATE_LIMITER?: RateLimitBinding;
+  DEMO_START_LIMITER?: RateLimitBinding;
+  DEMO_WRITE_LIMITER?: RateLimitBinding;
   /** R2 buckets (optional): attachments, their replica, nightly exports. */
   ATTACHMENTS?: R2Bucket;
   ATTACHMENTS_REPLICA?: R2Bucket;
@@ -42,6 +50,27 @@ function emailSender(config: AppConfig, env: Env): EmailSender {
   return config.devLogin ? new ConsoleEmailSender() : new DisabledEmailSender();
 }
 
+const limiter = (binding: RateLimitBinding | undefined) =>
+  binding ? { limit: async (key: string) => (await binding.limit({ key })).success } : undefined;
+
+/** Cloudflare Turnstile server-side check (https://developers.cloudflare.com/turnstile/). */
+function turnstile(secret: string | null, publicUrl: string | null) {
+  if (!secret) return undefined;
+  const expectedHost = publicUrl ? new URL(publicUrl).hostname : null;
+  return async (token: string, ip: string | null): Promise<boolean> => {
+    if (!token) return false;
+    const body = new FormData();
+    body.append("secret", secret);
+    body.append("response", token);
+    if (ip) body.append("remoteip", ip);
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", body });
+    if (!res.ok) return false;
+    const data = (await res.json()) as { success?: boolean; hostname?: string };
+    // A token solved on some other site that embeds our (public) site key does not count.
+    return data.success === true && (!expectedHost || data.hostname === expectedHost || data.hostname === `www.${expectedHost}`);
+  };
+}
+
 function getDeps(env: Env) {
   if (deps || configError) return deps;
   try {
@@ -52,6 +81,12 @@ function getDeps(env: Env) {
       blobs: env.ATTACHMENTS ? new R2BlobStore(env.ATTACHMENTS) : undefined,
       replica: env.ATTACHMENTS_REPLICA ? new R2BlobStore(env.ATTACHMENTS_REPLICA) : undefined,
       backups: env.BACKUPS ? new R2BlobStore(env.BACKUPS) : undefined,
+      rateLimits: {
+        api: limiter(env.API_RATE_LIMITER),
+        demoStart: limiter(env.DEMO_START_LIMITER),
+        demoWrite: limiter(env.DEMO_WRITE_LIMITER),
+      },
+      verifyTurnstile: turnstile(config.demo.turnstileSecret, config.publicUrl),
     };
   } catch (err) {
     configError = (err as Error).message;

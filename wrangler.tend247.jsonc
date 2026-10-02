@@ -1,0 +1,65 @@
+// tend247.com: the project's own site. The same Worker as every self-hosted deployment, with
+// the marketing pages at / and the public demo turned on. Self-hosters use wrangler.jsonc.
+//
+// Build and deploy from the repository root:
+//   npm run site:deploy
+// One-time setup (see docs/demo.md): a Postgres database for demo sandboxes, its Hyperdrive
+// config, an R2 bucket for files, a Turnstile widget, and the secrets listed at the end.
+//
+// The Worker is named tend247-site so this deploy replaces the earlier static-site Worker in
+// place, keeping its tend247.com and www.tend247.com custom domains.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tend247-site",
+  "main": "./src/worker/index.ts",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "placement": { "mode": "smart" },
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*", "/healthz"]
+  },
+  "routes": [
+    { "pattern": "tend247.com", "custom_domain": true },
+    { "pattern": "www.tend247.com", "custom_domain": true }
+  ],
+  "observability": { "enabled": true },
+  "hyperdrive": [
+    {
+      // npx wrangler hyperdrive create tend247-demo-db --connection-string="$DEMO_APP_URL" --caching-disabled
+      "binding": "HYPERDRIVE",
+      "id": "00000000000000000000000000000000",
+      "localConnectionString": "postgres://tend247_app:app_dev_pw@127.0.0.1:54329/tend247_dev"
+    }
+  ],
+  // npx wrangler r2 bucket create tend247-demo-attachments
+  "r2_buckets": [{ "binding": "ATTACHMENTS", "bucket_name": "tend247-demo-attachments" }],
+  // Workers Rate Limiting: per API token, per visitor starting demos, per sandbox writing.
+  "ratelimits": [
+    { "name": "API_RATE_LIMITER", "namespace_id": "2470", "simple": { "limit": 120, "period": 60 } },
+    { "name": "DEMO_START_LIMITER", "namespace_id": "2471", "simple": { "limit": 5, "period": 60 } },
+    { "name": "DEMO_WRITE_LIMITER", "namespace_id": "2472", "simple": { "limit": 40, "period": 10 } }
+  ],
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "TEND247_PUBLIC_SITE": "true",
+    "TEND247_PUBLIC_URL": "https://tend247.com",
+    "TEND247_REPO_URL": "https://github.com/Tend247/tend247",
+    "TEND247_DEMO": "true",
+    "TEND247_DEMO_POOL_SIZE": "3",
+    "TEND247_DEMO_HOURS": "24",
+    "TEND247_DEMO_MAX_RECORDS": "300",
+    // The Turnstile widget's site key (public). Its secret is a Worker secret.
+    "TEND247_TURNSTILE_SITE_KEY": "REPLACE_WITH_TURNSTILE_SITE_KEY",
+    "TEND247_DEV_LOGIN": "false",
+    "TEND247_OIDC_AUTO_PROVISION": "off",
+    "TEND247_REQUESTER_DOMAINS": "",
+    // The demo never sends email: sandbox mail goes to its mail viewer.
+    "TEND247_EMAIL_PROVIDER": "none",
+    "TEND247_EMAIL_FROM": "",
+    "TEND247_INBOUND_DOMAIN": ""
+  }
+  // Secrets: npx wrangler secret put <NAME> --config wrangler.tend247.jsonc
+  //   TEND247_SESSION_SECRET     at least 32 random characters
+  //   TEND247_TURNSTILE_SECRET   the Turnstile widget's secret key
+}

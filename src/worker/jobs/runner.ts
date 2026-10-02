@@ -21,6 +21,8 @@ import { ensureJob, scheduleJob } from "./schedule.ts";
 import { deliverWebhook } from "./webhooks.ts";
 import { runExportStep } from "../backup/export.ts";
 import { threadAddress } from "../email/threads.ts";
+import { fanOutEvent } from "../webhooks/endpoints.ts";
+import { demoUpkeep, simulateStep } from "../demo/service.ts";
 
 export type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -262,6 +264,7 @@ async function handleEvent(tx: Tx, w: WorkerDeps, tenantId: string, ev: OutboxEv
   if (created.length) await composeEmails(tx, w, tenantId, created, items, subject);
   const auto = await runAutomation(tx, tenantId, ev);
   if (auto.notifications.length) await composeEmails(tx, w, tenantId, auto.notifications, [], subject);
+  await fanOutEvent(tx, tenantId, ev);
 }
 
 /** Store the email for each new notification that wants one; sendPendingEmails sends it. */
@@ -303,6 +306,9 @@ const clean = (v: string) => v.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
  * attempts, so one undeliverable address never holds up everyone else's mail.
  */
 export async function sendPendingEmails(w: WorkerDeps, tenantId: string): Promise<number> {
+  const [tenant] = await w.sql<{ demo: boolean }[]>`select demo from tenants where id = ${tenantId}`;
+  // Demo sandboxes never send mail: it lands in the sandbox's mail viewer instead.
+  if (tenant?.demo) return captureDemoMail(w, tenantId);
   if (!w.email.canDeliver) return 0;
   return withTenant(w.sql, tenantId, async (tx) => {
     const rows = await tx<{ id: string; to: string; attempts: number; payload: Omit<OutboundEmail, "to"> }[]>`
@@ -334,6 +340,24 @@ export async function sendPendingEmails(w: WorkerDeps, tenantId: string): Promis
       }
     }
     return sent;
+  });
+}
+
+async function captureDemoMail(w: WorkerDeps, tenantId: string): Promise<number> {
+  return withTenant(w.sql, tenantId, async (tx) => {
+    const rows = await tx<{ id: string; userId: string; to: string; payload: Omit<OutboundEmail, "to"> }[]>`
+      select n.id, n.user_id, u.email as to, n.email_payload as payload
+      from notifications n join users u on u.id = n.user_id
+      where n.email_payload is not null and n.emailed_at is null
+      order by n.created_at limit 100
+      for update of n skip locked`;
+    for (const row of rows) {
+      await tx`
+        insert into demo_mail (tenant_id, user_id, to_addr, subject, body)
+        values (${tenantId}, ${row.userId}, ${row.to}, ${clean(row.payload.subject).slice(0, 500)}, ${row.payload.text.slice(0, 20000)})`;
+      await tx`update notifications set emailed_at = now(), email_payload = null where id = ${row.id}`;
+    }
+    return rows.length;
   });
 }
 
@@ -416,6 +440,11 @@ async function runJob(w: WorkerDeps, job: JobRow, now: Date): Promise<void> {
       await scheduleJob(w.sql, job.tenantId, "export", job.tenantId, more ? now : nextLocalTime(now, settings.timezone, 2, 0));
       return;
     }
+    case "demo_sim": {
+      const next = await simulateStep(w, job.tenantId);
+      if (next) await scheduleJob(w.sql, job.tenantId, "demo_sim", job.tenantId, next);
+      return;
+    }
     case "purge_trash": {
       await purgeTrash(w, job.tenantId, now);
       const settings = await getSettings(w.sql, job.tenantId);
@@ -465,6 +494,13 @@ export async function sweep(w: WorkerDeps): Promise<void> {
   const signaled = await w.sql<{ tenantId: string }[]>`select tenant_id from work_signals order by signaled_at limit 50`;
   for (const s of signaled) await processTenantOutbox(w, s.tenantId);
   await runDueJobs(w);
+  if (w.config.demo.enabled) {
+    try {
+      await demoUpkeep(w);
+    } catch (err) {
+      console.error("demo upkeep failed:", (err as Error).message);
+    }
+  }
   if (now.getUTCMinutes() % 10 === 0) {
     const tenants = await w.sql<{ id: string; demo: boolean }[]>`
       select id, demo from tenants where expires_at is null or expires_at > now()`;

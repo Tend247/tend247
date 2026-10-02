@@ -124,6 +124,18 @@ export function AdminSettings() {
           )}
         </div>
       )}
+
+      <h2>Export this workspace</h2>
+      <div className="card">
+        <p>
+          Download everything (configuration, people, records, comments and history) as one file. Load it into another Tend 24/7 deployment
+          with <code className="mono">npm run workspace:import</code>. Sign-in sessions, tokens and other secrets are never included;
+          attachment files stay in your storage bucket.
+        </p>
+        <a className="button" href="/api/admin/workspace/export" download>
+          Download workspace
+        </a>
+      </div>
     </section>
   );
 }

@@ -34,6 +34,23 @@ import { webhookSecret } from "../jobs/webhooks.ts";
 import { notFound } from "../lib/errors.ts";
 import { isUuid } from "../lib/crypto.ts";
 import { parse, parsePatch } from "../lib/validate.ts";
+import { templateSummaries } from "../templates/catalog.ts";
+import { installTemplate } from "../templates/install.ts";
+import { encodeWorkspace, readWorkspace } from "../workspace/bundle.ts";
+import {
+  createEndpoint,
+  deleteEndpoint,
+  listDeliveries,
+  listEndpoints,
+  pingEndpoint,
+  redeliver,
+  updateEndpoint,
+  WEBHOOK_TOPICS,
+} from "../webhooks/endpoints.ts";
+import { DryRun, importRecords, importUsers, type ImportReport } from "../import/service.ts";
+import { AppError } from "../lib/errors.ts";
+import { runAfterResponse } from "../http.ts";
+import { processTenantOutbox, runDueJobs, workerDeps } from "../jobs/runner.ts";
 
 function asAdmin<T>(c: Ctx, fn: (tx: Tx, actor: Actor) => Promise<T>): Promise<T> {
   const auth = requireRole(c, "admin");
@@ -47,6 +64,25 @@ function ownerParam(c: Ctx): string {
 }
 
 const calendarPatch = calendarSchema.partial().strict();
+
+/** Run an import; a dry run (the default) reports what would happen, then rolls back. */
+async function withDryRun(c: Ctx, fn: (tx: Tx, actor: Actor) => Promise<ImportReport>): Promise<ImportReport> {
+  try {
+    return await asAdmin(c, async (tx, actor) => {
+      const report = await fn(tx, actor);
+      if (report.dryRun) throw new DryRun(report);
+      return report;
+    });
+  } catch (err) {
+    if (err instanceof DryRun) return err.report;
+    throw err;
+  }
+}
+
+/** Deliver queued webhooks now rather than on the next cron sweep. */
+async function deliverSoon(c: Ctx): Promise<void> {
+  await runDueJobs(workerDeps(c.get("deps"), c.get("sql"), c), { limit: 10 });
+}
 
 /** Workspace configuration. Every route requires the admin role. */
 export const adminRoutes = new Hono<AppEnv>()
@@ -84,6 +120,9 @@ export const adminRoutes = new Hono<AppEnv>()
   })
   .patch("/projects/:id", async (c) => {
     const body = await readJson(c);
+    if (requireRole(c, "admin").demo && body && typeof body === "object" && (body as { inbound?: unknown }).inbound) {
+      throw new AppError("forbidden", "Demo sandboxes cannot receive email");
+    }
     return c.json({ project: await asAdmin(c, (tx, actor) => updateProject(tx, actor, c.req.param("id"), body)) });
   })
   .post("/projects/:id/record-types", async (c) => {
@@ -106,6 +145,14 @@ export const adminRoutes = new Hono<AppEnv>()
   .patch("/fields/:id", async (c) => {
     const body = await readJson(c);
     return c.json({ field: await asAdmin(c, (tx, actor) => updateField(tx, actor, c.req.param("id"), body)) });
+  })
+
+  // ---------------------------------------------------------------- starter templates
+  .get("/templates", (c) => c.json({ templates: templateSummaries() }))
+  .post("/templates/:key/install", async (c) => {
+    const body = await readJson(c);
+    const installed = await asAdmin(c, (tx, actor) => installTemplate(tx, actor, c.req.param("key"), body));
+    return c.json(installed, 201);
   })
 
   // ---------------------------------------------------------------- versioned config
@@ -203,12 +250,49 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ secret });
   })
   .get("/webhook-deliveries", async (c) =>
-    c.json({
-      deliveries: await asAdmin(c, (tx) => tx`
-        select id, rule_id, url, status, attempts, last_status, last_error, created_at, delivered_at
-        from webhook_deliveries order by created_at desc limit 100`),
-    }),
+    c.json({ deliveries: await asAdmin(c, (tx) => listDeliveries(tx, { endpointId: c.req.query("endpointId") })) }),
   )
+  .post("/webhook-deliveries/:id/redeliver", async (c) => {
+    const id = await asAdmin(c, (tx, actor) => redeliver(tx, actor, c.req.param("id")));
+    await runAfterResponse(c, deliverSoon(c));
+    return c.json({ id }, 201);
+  })
+
+  // ---------------------------------------------------------------- webhook endpoints
+  .get("/webhooks", async (c) => c.json({ endpoints: await asAdmin(c, (tx) => listEndpoints(tx)), topics: WEBHOOK_TOPICS }))
+  .post("/webhooks", async (c) => {
+    const body = await readJson(c);
+    const allowHttp = c.get("deps").config.devLogin;
+    return c.json({ endpoint: await asAdmin(c, (tx, actor) => createEndpoint(tx, actor, body, { allowHttp })) }, 201);
+  })
+  .patch("/webhooks/:id", async (c) => {
+    const body = await readJson(c);
+    const allowHttp = c.get("deps").config.devLogin;
+    return c.json({ endpoint: await asAdmin(c, (tx, actor) => updateEndpoint(tx, actor, c.req.param("id"), body, { allowHttp })) });
+  })
+  .delete("/webhooks/:id", async (c) => {
+    await asAdmin(c, (tx, actor) => deleteEndpoint(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
+  })
+  .post("/webhooks/:id/ping", async (c) => {
+    const id = await asAdmin(c, (tx, actor) => pingEndpoint(tx, actor, c.req.param("id")));
+    await runAfterResponse(c, deliverSoon(c));
+    return c.json({ deliveryId: id }, 201);
+  })
+
+  // ---------------------------------------------------------------- CSV import (dry run first)
+  .post("/import/users", async (c) => {
+    const body = await readJson(c);
+    return c.json(await withDryRun(c, (tx, actor) => importUsers(tx, actor, body)));
+  })
+  .post("/import/records", async (c) => {
+    const body = await readJson(c);
+    const auth = requireRole(c, "admin");
+    if (auth.demo) throw new AppError("forbidden", "Demo sandboxes cannot import records");
+    const report = await withDryRun(c, (tx, actor) => importRecords(tx, actor, body));
+    if (!report.dryRun) await runAfterResponse(c, processTenantOutbox(workerDeps(c.get("deps"), c.get("sql"), c), auth.tenantId));
+    return c.json(report);
+  })
 
   // ---------------------------------------------------------------- workspace
   .get("/settings", async (c) => {
@@ -228,6 +312,22 @@ export const adminRoutes = new Hono<AppEnv>()
   .get("/email", async (c) => {
     const { config, email } = c.get("deps");
     return c.json({ provider: email.name, canDeliver: email.canDeliver, from: config.email.from, inboundDomain: config.email.inboundDomain });
+  })
+
+  /** The whole workspace as a gzipped NDJSON bundle (npm run workspace:import reads it). */
+  .get("/workspace/export", async (c) => {
+    const auth = requireRole(c, "admin");
+    const data = await readWorkspace(c.get("sql"), auth.tenantId, { maxRows: 250_000 });
+    await asAdmin(c, (tx, actor) => audit(tx, actor, { entity: "workspace", entityId: actor.tenantId, action: "export" }));
+    const body = await encodeWorkspace(data);
+    const name = `${data.header.workspace.slug}-${data.header.exportedAt.slice(0, 10)}.tend247.ndjson.gz`;
+    return new Response(body as Uint8Array<ArrayBuffer>, {
+      headers: {
+        "content-type": "application/gzip",
+        "content-disposition": `attachment; filename="${name}"`,
+        "cache-control": "no-store",
+      },
+    });
   })
 
   .get("/audit", async (c) => {

@@ -42,7 +42,7 @@ const phases: { version: string; name: string; status: Status; items: string[]; 
   {
     version: "v1.0",
     name: "Launch",
-    status: "next",
+    status: "shipped",
     items: [
       "Requester portal, REST API, signed webhooks",
       "Four starter templates and dashboards",
@@ -65,7 +65,7 @@ const readiness: { area: string; items: string[] }[] = [
   },
   {
     area: "Adoption",
-    items: ["One-command install on Cloudflare", "Neon, Supabase and PlanetScale tested in CI", "Install, admin and template guides", "Live demo at tend247.com"],
+    items: ["One-command install on Cloudflare", "PlanetScale tested in CI; Neon and Supabase guides", "Install, admin, template, API and restore guides", "Live demo at tend247.com"],
   },
   {
     area: "Community",
@@ -92,8 +92,8 @@ export function Roadmap() {
         <p className="eyebrow">Roadmap</p>
         <h1>From foundations to a market-ready 1.0</h1>
         <p className="hero-body">
-          Four phases, each closed by a gate that must pass before the next begins. Foundations, the work core and the service
-          layer are shipped; the launch is next.
+          Four phases, each closed by a gate that must pass before the next begins. All four are built: 1.0 is a release
+          candidate while the first pilot teams go live.
         </p>
         <div className="progress" role="img" aria-label={`${done} of ${phases.length} phases shipped`}>
           {phases.map((p) => (

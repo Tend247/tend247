@@ -5,6 +5,7 @@ import { MemoryBlobStore } from "../src/worker/attachments/blobs.ts";
 import { decodeExportFile, pruneExports, runExportStep } from "../src/worker/backup/export.ts";
 import { rebuildAfterRestore, runDueJobs, sweep } from "../src/worker/jobs/runner.ts";
 import { withTenant } from "../src/worker/db/client.ts";
+import { countRows, deleteWorkspace, importWorkspace, readWorkspace, workspaceFromExport } from "../src/worker/workspace/bundle.ts";
 import { appSql, makeApp, createWorkspace, Client, setupApProject, baseConfig, type TestWorkspace } from "./helpers.ts";
 
 const sql = appSql();
@@ -44,7 +45,7 @@ describe("nightly export", () => {
     expect(keys).toContain(`exports/${ws.slug}/2026-10-07/manifest.json`);
     const manifest = JSON.parse(new TextDecoder().decode((await backups.get(`exports/${ws.slug}/2026-10-07/manifest.json`))!.body as Uint8Array));
     expect(manifest).toMatchObject({ format: "tend247-export", version: 1, encrypted: true, workspace: { slug: ws.slug } });
-    expect(manifest.schema).toMatch(/^0002_/);
+    expect(manifest.schema).toMatch(/^0003_/);
     expect(manifest.tables.records.rows).toBe(3);
     expect(manifest.tables.comments.rows).toBe(3);
     expect(manifest.tables.sessions).toBeUndefined(); // secrets are never exported
@@ -115,5 +116,23 @@ describe("nightly export", () => {
     expect(r.events).toBeGreaterThanOrEqual(1);
     const [signal] = await sql`select 1 from work_signals where tenant_id = ${ws.id}`;
     expect(signal).toBeTruthy();
+  });
+});
+
+describe("restoring a nightly export", () => {
+  it("rebuilds the workspace from the manifest and its encrypted parts, row for row", async () => {
+    const day = clock.toISOString().slice(0, 10);
+    const manifestKey = `exports/${ws.slug}/${day}/manifest.json`;
+    const raw = (await backups.get(manifestKey))?.body as Uint8Array | undefined;
+    expect(raw, "the export test above writes this manifest").toBeTruthy();
+    const manifest = JSON.parse(new TextDecoder().decode(raw));
+    const data = await workspaceFromExport(manifest, async (key) => (await backups.get(key))!.body as Uint8Array, KEY);
+    await expect(workspaceFromExport(manifest, async (key) => (await backups.get(key))!.body as Uint8Array, null)).rejects.toThrow(/encrypted/);
+    const restored = await importWorkspace(sql, data, { slug: `restore-${Date.now().toString(36)}` });
+    const counts = countRows(await readWorkspace(sql, restored.tenantId));
+    for (const [table, entry] of Object.entries(manifest.tables as Record<string, { rows: number }>)) {
+      expect({ table, rows: counts[table] }).toEqual({ table, rows: entry.rows });
+    }
+    await deleteWorkspace(sql, restored.tenantId);
   });
 });

@@ -26,22 +26,24 @@ const stack = [
   ["Background work", "Outbox and timers in Postgres, drained after each response and by a one-minute Cron Trigger"],
   ["Email", "Email Routing in; Cloudflare Email Sending, Postmark or Resend out"],
   ["Backups", "Point-in-time recovery at the Postgres host, plus a nightly AES-GCM export to R2"],
-  ["Live updates", "Durable Objects with WebSocket hibernation (1.0)"],
+  ["Live updates", "Short polling today; Durable Objects with WebSocket hibernation later"],
+  ["Integrations", "Scoped API tokens, signed webhooks with retries, CSV import, whole-workspace bundles"],
+  ["Public demo", "Turnstile, a golden copy cloned per visitor with fresh ids and shifted dates, a warm pool, Workers Rate Limiting"],
   ["Sign-in", "Your OIDC provider for staff; one-time email links for requesters"],
 ];
 
 type St = "shipped" | "partial" | "planned";
 const requirements: { group: string; ids: string; status: St; items: string[] }[] = [
-  { group: "Records and configuration", ids: "FR-01 to FR-05", status: "partial", items: ["Records with keys and custom fields", "Versioned workflows and layouts", "Starter templates (1.0)"] },
+  { group: "Records and configuration", ids: "FR-01 to FR-05", status: "shipped", items: ["Records with keys and custom fields", "Versioned workflows and layouts", "Four starter templates"] },
   { group: "Work routing", ids: "FR-06 to FR-09", status: "shipped", items: ["Teams, queues, round-robin", "Automation rules", "Approvals and business-hours SLAs"] },
   { group: "Collaboration", ids: "FR-10 to FR-13", status: "shipped", items: ["Public and internal comments, mentions", "Attachments", "Email threading and notifications"] },
-  { group: "Finding work", ids: "FR-14 to FR-16", status: "partial", items: ["Filters, saved views, boards, bulk edit", "Search across comments", "Dashboards (1.0)"] },
+  { group: "Finding work", ids: "FR-14 to FR-16", status: "shipped", items: ["Filters, saved views, boards, bulk edit", "Search across comments", "Dashboards"] },
   { group: "Access and audit", ids: "FR-17 to FR-19", status: "shipped", items: ["Roles plus restricted projects", "Append-only audit trail", "SSO and email-link sign-in"] },
-  { group: "Integration", ids: "FR-20 to FR-24", status: "planned", items: ["REST API with scoped tokens", "Signed webhooks", "Requester portal, CSV import"] },
-  { group: "Self-hosting", ids: "S-01 to S-10", status: "partial", items: ["Migrations and locked-down app role", "Three Postgres providers", "One-command installer"] },
-  { group: "Backup and recovery", ids: "B-01 to B-10", status: "partial", items: ["Trash with admin restore", "Nightly export and replica", "Scheduled restore test"] },
-  { group: "Landing page and demo", ids: "D-01 to D-10", status: "partial", items: ["Landing, roadmap, architecture pages", "24-hour private sandboxes", "Activity simulator"] },
-  { group: "Phone access by QR", ids: "Q-01 to Q-10", status: "planned", items: ["One-time pairing code, approved on the desktop", "Read-only enforced on the server", "Linked devices with revoke and audit"] },
+  { group: "Integration", ids: "FR-20 to FR-24", status: "shipped", items: ["REST API with scoped tokens", "Signed webhooks", "Requester portal, CSV import"] },
+  { group: "Self-hosting", ids: "S-01 to S-10", status: "shipped", items: ["Migrations and locked-down app role", "PlanetScale in CI; Neon and Supabase guides", "One-command installer"] },
+  { group: "Backup and recovery", ids: "B-01 to B-10", status: "shipped", items: ["Trash with admin restore", "Nightly export and replica", "Scheduled restore test"] },
+  { group: "Landing page and demo", ids: "D-01 to D-10", status: "shipped", items: ["Landing, roadmap, architecture pages", "24-hour private sandboxes", "Activity simulator"] },
+  { group: "Phone access by QR", ids: "Q-01 to Q-10", status: "shipped", items: ["One-time pairing code, approved on the desktop", "Read-only enforced on the server", "Linked devices with revoke and audit"] },
 ];
 const stLabel: Record<St, string> = { shipped: "Shipped", partial: "In progress", planned: "Planned" };
 
@@ -53,7 +55,7 @@ export function Architecture() {
         <h1>One Worker in front. Postgres as the source of truth.</h1>
         <p className="hero-body">
           Tend 24/7 runs as a single Cloudflare Worker in each company's own account, backed by the Postgres it already uses.
-          Here is how a request flows, the principles behind it, and what the MVP covers.
+          Here is how a request flows, the principles behind it, and what 1.0 covers.
         </p>
       </section>
 

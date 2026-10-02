@@ -1,4 +1,5 @@
-# Tend 24/7 CI: typecheck, license policy, tests against real Postgres, build.
+# Tend 24/7 CI: typecheck, license policy, tests against real Postgres, build. A second job runs
+# the same tests against PlanetScale Postgres when the repository has its secrets.
 name: CI
 
 on:
@@ -48,3 +49,46 @@ jobs:
       - run: npm run licenses:check
       - run: npm test
       - run: npm run build
+      - name: Build the tend247.com configuration
+        run: npm run site:build
+      - name: Installer dry run
+        run: npm run setup -- --dry-run --yes --db-owner-url "$TEND247_TEST_DB_OWNER_URL" --admin-email ci@example.com --sign-in email --email-api-key x --email-from "CI <ci@example.com>"
+
+  # The same suite against a hosted Postgres. Configure these repository secrets to turn it on:
+  #   PLANETSCALE_OWNER_URL  the schema owner role (see docs/install.md, "PlanetScale")
+  #   PLANETSCALE_APP_URL    the app role; created on first run with PLANETSCALE_APP_PASSWORD
+  #   PLANETSCALE_APP_PASSWORD
+  #   PLANETSCALE_ADMIN_URL  optional: the default postgres role, to prove the app refuses a
+  #                          role with BYPASSRLS
+  # Use a database reserved for CI: the tests drop and recreate its public schema.
+  planetscale:
+    runs-on: ubuntu-latest
+    needs: verify
+    concurrency: planetscale-ci
+    env:
+      TEND247_TEST_DB_OWNER_URL: ${{ secrets.PLANETSCALE_OWNER_URL }}
+      TEND247_TEST_DB_APP_URL: ${{ secrets.PLANETSCALE_APP_URL }}
+      TEND247_DB_APP_PASSWORD: ${{ secrets.PLANETSCALE_APP_PASSWORD }}
+      TEND247_TEST_DB_SUPERUSER_URL: ${{ secrets.PLANETSCALE_ADMIN_URL }}
+    steps:
+      - name: Check for PlanetScale secrets
+        id: gate
+        run: |
+          if [ -n "$TEND247_TEST_DB_OWNER_URL" ] && [ -n "$TEND247_TEST_DB_APP_URL" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PlanetScale secrets are not configured; skipping." >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        if: steps.gate.outputs.run == 'true'
+      - name: Tests against PlanetScale Postgres
+        if: steps.gate.outputs.run == 'true'
+        run: npm test

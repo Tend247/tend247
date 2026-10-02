@@ -11,7 +11,7 @@ import type { WorkerDeps } from "../jobs/runner.ts";
 
 export const EXPORT_FORMAT = "tend247-export";
 export const EXPORT_VERSION = 1;
-const CHUNK_ROWS = 2000;
+export const CHUNK_ROWS = 2000;
 const STEP_CHUNKS = 5;
 const MAGIC = new TextEncoder().encode("T247E1");
 
@@ -35,6 +35,7 @@ export const EXPORT_TABLES: { name: string; order: string; omit?: string[] }[] =
   { name: "sla_clocks", order: "id" },
   { name: "approvals", order: "id" },
   { name: "automation_rules", order: "id" },
+  { name: "webhook_endpoints", order: "id" },
   { name: "email_messages", order: "id" },
   { name: "audit_log", order: "id" },
 ];
@@ -91,11 +92,14 @@ async function encode(w: WorkerDeps, text: string): Promise<Uint8Array> {
   return w.config.backup.encryptionKey ? encrypt(w.config.backup.encryptionKey, zipped) : zipped;
 }
 
-async function readChunk(tx: Tx, table: (typeof EXPORT_TABLES)[number], offset: number): Promise<unknown[]> {
-  // Table and column names come from the fixed list above, never from input.
+export async function readChunk(tx: Tx, table: (typeof EXPORT_TABLES)[number], offset: number, tenantId: string): Promise<unknown[]> {
+  // Table and column names come from the fixed list above, never from input. The tenant filter
+  // repeats what row-level security enforces, so a connection that bypasses it (an owner
+  // with BYPASSRLS running a script) still reads only this workspace.
   const omit = (table.omit ?? []).map((c) => ` - '${c}'`).join("");
   const rows = await tx.unsafe(
-    `select to_jsonb(t)${omit} as j from ${table.name} t order by ${table.order} limit ${CHUNK_ROWS} offset ${Number(offset)}`,
+    `select to_jsonb(t)${omit} as j from ${table.name} t where t.tenant_id = $1 order by ${table.order} limit ${CHUNK_ROWS} offset ${Number(offset)}`,
+    [tenantId],
   );
   return (rows as unknown as { j: unknown }[]).map((r) => r.j);
 }
@@ -135,7 +139,7 @@ export async function runExportStep(w: WorkerDeps, tenantId: string): Promise<bo
         return false;
       }
       const table = EXPORT_TABLES[p.table]!;
-      const rows = await withTenant(w.sql, tenantId, (tx) => readChunk(tx, table, p.offset));
+      const rows = await withTenant(w.sql, tenantId, (tx) => readChunk(tx, table, p.offset, tenantId));
       const entry = p.tables[table.name] ?? { rows: 0, parts: [] };
       let bytes = run.bytes;
       if (rows.length) {

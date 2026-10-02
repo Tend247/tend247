@@ -8,6 +8,7 @@ export type ErrorCode =
   | "version_conflict"
   | "unsupported_media_type"
   | "unsafe_database"
+  | "rate_limited"
   | "internal";
 
 const STATUS: Record<ErrorCode, number> = {
@@ -20,6 +21,7 @@ const STATUS: Record<ErrorCode, number> = {
   version_conflict: 409,
   unsupported_media_type: 415,
   unsafe_database: 503,
+  rate_limited: 429,
   internal: 500,
 };
 

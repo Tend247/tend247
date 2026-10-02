@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { useSession } from "../session.tsx";
 import { SiteLayout, SiteSection } from "./SiteLayout.tsx";
 import { ProductPreview } from "./ProductPreview.tsx";
+import { StatsStrip, TryDemo } from "../demo/TryDemo.tsx";
 
 const today = [
   {
@@ -28,6 +29,18 @@ const today = [
     title: "Recoverable by design",
     body: "Full history on every record, a trash for records, comments and files, a nightly encrypted export to a bucket you control, and an attachment replica.",
   },
+  {
+    title: "A portal for everyone else",
+    body: "Employees pick what they need from a catalog, follow their requests, reply and attach files. They never see internal notes.",
+  },
+  {
+    title: "An API and webhooks",
+    body: "Scoped API tokens for scripts, signed webhooks for other systems, CSV import for people and records, and dashboards for team leads.",
+  },
+  {
+    title: "Your work on your phone",
+    body: "Scan a QR code, approve the phone on your computer, and it shows your queue for four hours, read-only, with nothing to sign in to.",
+  },
 ];
 
 const templates = [
@@ -40,9 +53,10 @@ const templates = [
 export function Landing() {
   const { site } = useSession();
   const repo = site?.repoUrl;
+  const demo = site?.demo.enabled ?? false;
   return (
     <SiteLayout>
-      <section className="hero">
+      <section className="hero" id="top">
         <div className="hero-copy">
           <p className="hero-kicker">Can AI build a work-management stack in 12 hours? Claude Opus 5.5 Extra can!</p>
           <p className="eyebrow">Open-source work management for front and back-office teams</p>
@@ -56,9 +70,13 @@ export function Landing() {
             admin instead of built by engineers. Every change is recorded, and every workspace is isolated in the database.
           </p>
           <div className="hero-actions">
-            <span className="button-primary disabled" aria-disabled="true">
-              Try the live demo
-            </span>
+            {demo ? (
+              <TryDemo />
+            ) : (
+              <a className="button-primary" href="https://tend247.com/#demo">
+                Try the live demo
+              </a>
+            )}
             {repo ? (
               <a className="button-outline" href={repo}>
                 View the source
@@ -69,16 +87,15 @@ export function Landing() {
               </Link>
             )}
           </div>
-          <p className="hero-note">
-            The live demo opens with the 1.0 launch. <Link to="/roadmap">See the roadmap</Link>.
-          </p>
         </div>
         <div className="hero-visual">
           <ProductPreview />
         </div>
       </section>
 
-      <SiteSection id="features" title="What it does today" lead="Foundations, the work core and the service layer are shipped and tested end to end.">
+      <StatsStrip />
+
+      <SiteSection id="features" title="What it does" lead="Version 1.0: the work core, the service layer, a requester portal, an API and the public demo, tested end to end.">
         <div className="cards">
           {today.map((c) => (
             <article key={c.title} className="card-dark">
@@ -107,13 +124,19 @@ export function Landing() {
       <SiteSection
         id="demo"
         title="A demo that never gets junked up"
-        lead="Opening with 1.0: Try the demo gives you a private copy of Fernhollow Foods, a made-up maker of sauces, spice blends and cold brew."
+        lead="Try the demo gives you a private copy of Fernhollow Foods, a made-up maker of sauces, spice blends and cold brew."
       >
         <ul className="ticks">
           <li>Your own sandbox, ready instantly and deleted within 24 hours, so nobody sees anyone else's mess.</li>
           <li>Switch roles to submit a request as an employee, work it as an agent, then change the workflow as an admin.</li>
           <li>A simulator keeps numbers moving: new requests arrive, work advances, and an SLA breaches while you watch.</li>
+          <li>Nothing leaves the sandbox: email lands in a viewer instead of an inbox, and webhooks are logged, not sent.</li>
         </ul>
+        {demo && (
+          <p className="muted-dark">
+            Start from the <a href="#top">Try the live demo</a> button at the top of the page.
+          </p>
+        )}
       </SiteSection>
 
       <SiteSection
@@ -132,12 +155,12 @@ export function Landing() {
             <strong>Migrate.</strong> One command creates the schema and a locked-down app role.
           </li>
           <li>
-            <strong>Deploy.</strong> Push the Worker to your Cloudflare account and sign in with your SSO.
+            <strong>Deploy.</strong> <code>npm run setup</code> creates the Cloudflare resources and deploys the Worker; sign in with your SSO.
           </li>
         </ol>
         <p className="muted-dark">
-          A one-command installer arrives with 1.0; until then{" "}
-          {repo ? <a href={`${repo}/blob/main/docs/install.md`}>the install guide</a> : "the install guide"} walks through each step.
+          {repo ? <a href={`${repo}/blob/main/docs/install.md`}>The install guide</a> : "The install guide"} explains each step, including
+          the database roles to create on PlanetScale, Neon or Supabase.
         </p>
       </SiteSection>
     </SiteLayout>

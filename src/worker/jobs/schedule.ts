@@ -2,7 +2,7 @@
 // before any workspace is known. Rescheduling replaces the time; finishing deletes the row.
 import type { Db } from "../db/client.ts";
 
-export const JOB_KINDS = ["sla", "webhook", "replicate", "export", "purge_trash"] as const;
+export const JOB_KINDS = ["sla", "webhook", "replicate", "export", "purge_trash", "demo_sim"] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 export async function scheduleJob(db: Db, tenantId: string, kind: JobKind, refId: string, runAt: Date): Promise<void> {

@@ -30,6 +30,15 @@ export interface AppDeps {
   webhookFetch?: (input: string, init: RequestInit) => Promise<Response>;
   /** Clock override for tests. */
   now?: () => Date;
+  /** Rate limiters (Workers Rate Limiting bindings); absent means no limit. */
+  rateLimits?: { api?: RateLimiter; demoStart?: RateLimiter; demoWrite?: RateLimiter };
+  /** Turnstile check for "Try the demo" (tests inject a fake; the Worker calls siteverify). */
+  verifyTurnstile?: (token: string, ip: string | null) => Promise<boolean>;
+}
+
+export interface RateLimiter {
+  /** True when the request may go ahead. */
+  limit(key: string): Promise<boolean>;
 }
 
 export type AppEnv = {
@@ -38,6 +47,8 @@ export type AppEnv = {
     auth: AuthContext | null;
     deps: AppDeps;
     background: Promise<unknown>[];
+    /** False on the few public routes that run even when the database check fails. */
+    dbReady: boolean;
   };
 };
 
@@ -50,7 +61,7 @@ export function requireAuth(c: Ctx): AuthContext {
 }
 
 export function actorOf(auth: AuthContext): Actor {
-  return { tenantId: auth.tenantId, userId: auth.userId, role: auth.role };
+  return { tenantId: auth.tenantId, userId: auth.userId, role: auth.role, ...(auth.kind === "token" ? { via: "api" as const } : {}) };
 }
 
 export function requireRole(c: Ctx, ...roles: AuthContext["role"][]): AuthContext {

@@ -76,7 +76,7 @@ export type Action = z.infer<typeof actionSchema>;
 
 const COLUMNS = (tx: Tx) => tx`id, name, project_id, enabled, trigger, conditions, actions, position, created_at, updated_at`;
 
-function checkWebhookUrl(url: string, allowHttp: boolean): string | null {
+export function checkWebhookUrl(url: string, allowHttp: boolean): string | null {
   const u = new URL(url);
   if (u.protocol !== "https:" && !(allowHttp && u.protocol === "http:")) return "Webhooks must use https";
   const host = u.hostname.toLowerCase().replace(/\.+$/, "");

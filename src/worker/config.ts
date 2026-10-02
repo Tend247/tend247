@@ -31,6 +31,23 @@ export interface AppConfig {
   email: EmailConfig;
   /** Nightly export settings (the BACKUPS bucket binding enables it). */
   backup: { encryptionKey: string | null; dailyKeep: number; monthlyKeep: number };
+  /** The public demo (tend247.com only): private sandboxes cloned from a golden copy. */
+  demo: DemoConfig;
+}
+
+export interface DemoConfig {
+  enabled: boolean;
+  /** Cloudflare Turnstile keys guarding "Try the demo". */
+  turnstileSiteKey: string | null;
+  turnstileSecret: string | null;
+  /** Ready-made sandboxes kept waiting so a visitor never waits for a copy. */
+  poolSize: number;
+  /** How long a sandbox lives. */
+  hours: number;
+  /** Most records a sandbox may hold. */
+  maxRecords: number;
+  /** Most sandboxes alive at once (a ceiling on what visitors can make the database hold). */
+  maxSandboxes: number;
 }
 
 export interface EmailConfig {
@@ -78,6 +95,13 @@ const schema = z.object({
     .optional(),
   TEND247_BACKUP_DAILY_KEEP: z.coerce.number().int().min(1).max(365).optional(),
   TEND247_BACKUP_MONTHLY_KEEP: z.coerce.number().int().min(0).max(120).optional(),
+  TEND247_DEMO: bool,
+  TEND247_TURNSTILE_SITE_KEY: z.string().max(200).optional(),
+  TEND247_TURNSTILE_SECRET: z.string().max(200).optional(),
+  TEND247_DEMO_POOL_SIZE: z.coerce.number().int().min(0).max(50).optional(),
+  TEND247_DEMO_HOURS: z.coerce.number().int().min(1).max(24).optional(),
+  TEND247_DEMO_MAX_RECORDS: z.coerce.number().int().min(20).max(5000).optional(),
+  TEND247_DEMO_MAX_SANDBOXES: z.coerce.number().int().min(1).max(100_000).optional(),
 });
 
 /** Parse configuration from Worker bindings or process.env; throws a readable error. */
@@ -117,6 +141,9 @@ export function loadConfig(env: Record<string, unknown>): AppConfig {
   if ((provider === "postmark" || provider === "resend") && !e.TEND247_EMAIL_API_KEY) {
     throw new Error(`Invalid Tend 24/7 configuration: TEND247_EMAIL_PROVIDER=${provider} needs TEND247_EMAIL_API_KEY`);
   }
+  if (e.TEND247_DEMO && !e.TEND247_DEV_LOGIN && (!e.TEND247_TURNSTILE_SITE_KEY || !e.TEND247_TURNSTILE_SECRET)) {
+    throw new Error("Invalid Tend 24/7 configuration: TEND247_DEMO needs TEND247_TURNSTILE_SITE_KEY and TEND247_TURNSTILE_SECRET");
+  }
   return {
     sessionSecret: e.TEND247_SESSION_SECRET,
     sessionTtlHours: e.TEND247_SESSION_TTL_HOURS ?? 24 * 14,
@@ -137,6 +164,15 @@ export function loadConfig(env: Record<string, unknown>): AppConfig {
       encryptionKey: e.TEND247_BACKUP_ENCRYPTION_KEY || null,
       dailyKeep: e.TEND247_BACKUP_DAILY_KEEP ?? 14,
       monthlyKeep: e.TEND247_BACKUP_MONTHLY_KEEP ?? 12,
+    },
+    demo: {
+      enabled: e.TEND247_DEMO,
+      turnstileSiteKey: e.TEND247_TURNSTILE_SITE_KEY || null,
+      turnstileSecret: e.TEND247_TURNSTILE_SECRET || null,
+      poolSize: e.TEND247_DEMO_POOL_SIZE ?? 3,
+      hours: e.TEND247_DEMO_HOURS ?? 24,
+      maxRecords: e.TEND247_DEMO_MAX_RECORDS ?? 300,
+      maxSandboxes: e.TEND247_DEMO_MAX_SANDBOXES ?? 1000,
     },
   };
 }

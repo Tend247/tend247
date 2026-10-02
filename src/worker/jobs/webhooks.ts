@@ -42,6 +42,14 @@ export async function deliverWebhook(w: WorkerDeps, tenantId: string, deliveryId
   });
   if (!prepared) return;
   const { d, secret } = prepared;
+  const [tenant] = await w.sql<{ demo: boolean }[]>`select demo from tenants where id = ${tenantId}`;
+  if (tenant?.demo) {
+    // Demo sandboxes log what would have been sent, and send nothing.
+    await withTenant(w.sql, tenantId, (tx) => tx`
+      update webhook_deliveries set status = 'skipped', last_error = 'Demo sandboxes record webhooks but never send them'
+      where id = ${d.id}`);
+    return;
+  }
   const body = JSON.stringify({ deliveryId: d.id, ...d.payload });
   const ts = Math.floor(w.now().getTime() / 1000);
   let status: number | null = null;

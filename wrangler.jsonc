@@ -1,7 +1,7 @@
 // Tend 24/7 Worker configuration.
 // Every company deploys its own copy into its own Cloudflare account.
-// Run `npm run setup` (Phase 3) or follow docs/install.md to create the resources below
-// and replace the placeholder IDs.
+// Run `npm run setup` (or follow docs/install.md) to create the resources below and replace
+// the placeholder IDs.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tend247",
@@ -34,17 +34,25 @@
     // { "binding": "ATTACHMENTS_REPLICA", "bucket_name": "tend247-attachments-replica" },
     // { "binding": "BACKUPS", "bucket_name": "tend247-backups" }
   ],
+  // Optional: rate limit each API token (requests per minute). Remove to turn off.
+  "ratelimits": [{ "name": "API_RATE_LIMITER", "namespace_id": "2470", "simple": { "limit": 300, "period": 60 } }],
   // Optional: Cloudflare Email Service for outbound mail (set TEND247_EMAIL_PROVIDER=cloudflare).
   // "send_email": [{ "name": "EMAIL" }],
   // Every minute: deliver queued events, fire SLA and retry timers, run nightly jobs.
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "TEND247_DEV_LOGIN": "false",
+    // Single sign-on for staff (the client secret is a Worker secret).
+    "TEND247_OIDC_ISSUER": "",
+    "TEND247_OIDC_CLIENT_ID": "",
+    "TEND247_OIDC_ALLOWED_DOMAINS": "",
     "TEND247_OIDC_AUTO_PROVISION": "off",
     "TEND247_REQUESTER_DOMAINS": "",
     // Only the project's own site (tend247.com) shows the marketing pages at /.
     "TEND247_PUBLIC_SITE": "false",
     "TEND247_REPO_URL": "",
+    // The address people use, e.g. https://help.acme.com (used in emailed links and SSO).
+    "TEND247_PUBLIC_URL": "",
     // none | cloudflare | postmark | resend (postmark/resend need the TEND247_EMAIL_API_KEY secret)
     "TEND247_EMAIL_PROVIDER": "none",
     "TEND247_EMAIL_FROM": "",

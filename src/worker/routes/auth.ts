@@ -13,6 +13,7 @@ import { AppError, invalid } from "../lib/errors.ts";
 import { decideByToken, peekApprovalToken } from "../approvals/service.ts";
 import { processTenantOutbox, workerDeps } from "../jobs/runner.ts";
 import { isUuid, randomToken, sha256Hex, signPayload, verifyPayload } from "../lib/crypto.ts";
+import { htmlPage, PAGE_STYLE } from "../lib/html.ts";
 
 const OIDC_COOKIE = "t247_oidc";
 const MAGIC_LINK_MINUTES = 15;
@@ -55,7 +56,7 @@ function mayUseEmailLink(c: Ctx, role: string): boolean {
 // from history and redeems it with a POST, so link scanners that only fetch the URL cannot
 // use the link up.
 const MAGIC_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Signing in · Tend 24/7</title><style>body{font-family:system-ui,sans-serif;background:#101317;color:#e7e9ec;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:26rem;padding:2rem;text-align:center}button{font:inherit;font-weight:700;padding:.8rem 1.4rem;border-radius:8px;border:0;background:#f2a33a;color:#1c1206;cursor:pointer}p{color:#9aa3ae}</style></head>
+<title>Signing in · Tend 24/7</title><style>${PAGE_STYLE}</style></head>
 <body><main><h1>Sign in to Tend 24/7</h1><p id="msg">Continue to finish signing in on this device.</p><button id="go">Continue</button></main>
 <script>
 const p=new URLSearchParams(location.hash.slice(1));const w=p.get("w"),t=p.get("t");history.replaceState(null,"",location.pathname);
@@ -97,7 +98,8 @@ export const authRoutes = new Hono<AppEnv>()
   /** What the sign-in page should offer. */
   .get("/config", async (c) => {
     const { config, email } = c.get("deps");
-    const ws = await resolveWorkspace(c.get("sql"), c.req.query("workspace"));
+    // When the database is unavailable the public pages still render (without a workspace).
+    const ws = c.get("dbReady") ? await resolveWorkspace(c.get("sql"), c.req.query("workspace")) : null;
     return c.json({
       workspace: ws ? { slug: ws.slug, name: ws.name, demo: ws.demo } : null,
       devLogin: config.devLogin,
@@ -105,6 +107,8 @@ export const authRoutes = new Hono<AppEnv>()
       magicLinks: email.canDeliver,
       publicSite: config.publicSite,
       repoUrl: config.repoUrl,
+      demo: config.demo.enabled ? { enabled: true, turnstileSiteKey: config.demo.turnstileSiteKey } : { enabled: false, turnstileSiteKey: null },
+      databaseReady: c.get("dbReady"),
     });
   })
 
@@ -135,7 +139,8 @@ export const authRoutes = new Hono<AppEnv>()
       c,
       (async () => {
         const ws = await resolveWorkspace(sql, workspace);
-        if (!ws) return;
+        // Demo sandboxes never send mail, sign-in links included (no spam relay).
+        if (!ws || ws.demo) return;
         const token = randomToken(32);
         const hash = await sha256Hex(token);
         const issued = await withTenant(sql, ws.id, async (tx) => {
@@ -163,7 +168,7 @@ export const authRoutes = new Hono<AppEnv>()
     return c.json({ ok: true }, 202);
   })
 
-  .get("/magic", (c) => c.html(MAGIC_PAGE))
+  .get("/magic", (c) => htmlPage(c, MAGIC_PAGE))
 
   /** Redeem a sign-in link (POSTed by the page above). Creates a self-registered requester on first use. */
   .post("/magic/verify", async (c) => {
@@ -260,7 +265,7 @@ export const authRoutes = new Hono<AppEnv>()
     }
   })
 
-  .get("/approval", (c) => c.html(APPROVAL_PAGE))
+  .get("/approval", (c) => htmlPage(c, APPROVAL_PAGE))
   .post("/approval/peek", async (c) => {
     const { token } = parse(tokenBody, await readJson(c));
     return c.json(await peekApprovalToken(c.get("sql"), token));
