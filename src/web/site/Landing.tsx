@@ -48,6 +48,8 @@ const templates = [
   { name: "IT Service Desk", body: "Break-fix requests from the plant floor and the office, with SLAs by priority." },
   { name: "IT Enhancements", body: "Change requests for internal systems, with approval before work starts." },
   { name: "AP Requests", body: "Invoice exceptions, vendor questions and payment holds for accounts payable." },
+  { name: "Agile Software Team", body: "Stories, bugs and tasks in sprints from a ranked backlog, with epics, story points, a burndown and velocity." },
+  { name: "Your own", tag: "Setup guide", body: "Answer plain questions about the form, the steps, approvals and targets. Save any project as a template and share it as a file." },
 ];
 
 export function Landing() {
@@ -108,12 +110,12 @@ export function Landing() {
 
       <SiteSection
         title="Built for front and back office"
-        lead="Four starter templates ship with 1.0. Install one, rename anything, add your own fields, and the queue is live."
+        lead="Five templates ship with 1.0, and an admin who is not a developer can build their own. Install one, rename anything, add your own fields, and the queue is live."
       >
-        <div className="cards four">
+        <div className="cards three">
           {templates.map((t) => (
             <article key={t.name} className="card-dark">
-              <span className="tag">Template</span>
+              <span className="tag">{"tag" in t ? t.tag : "Template"}</span>
               <h3>{t.name}</h3>
               <p>{t.body}</p>
             </article>

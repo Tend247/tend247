@@ -54,6 +54,18 @@ import { listParam } from "../lib/validate.ts";
 import { createToken, listTokens, revokeToken } from "../tokens/service.ts";
 import { getDashboard } from "../dashboard/service.ts";
 import { bump, DEMO_ATTACHMENT_MAX_MB } from "../demo/service.ts";
+import {
+  completeSprint,
+  createSprint,
+  deleteSprint,
+  getBacklog,
+  listSprints,
+  planRecord,
+  sprintReport,
+  startSprint,
+  updateSprint,
+  velocity,
+} from "../agile/service.ts";
 
 /** Run `fn` in the signed-in person's workspace. */
 function inTenant<T>(c: Ctx, fn: (tx: Tx, actor: Actor) => Promise<T>): Promise<T> {
@@ -87,6 +99,8 @@ export function filtersFromQuery(q: Record<string, string>): ListFilters {
     createdBefore: q.createdBefore || undefined,
     q: q.q || undefined,
     custom: parseCustomFilter(q.custom),
+    sprintId: q.sprintId || undefined,
+    epicId: q.epicId || undefined,
     sort: (q.sort as Sort) || undefined,
     limit: q.limit ? Number(q.limit) : undefined,
     cursor: q.cursor || undefined,
@@ -146,7 +160,7 @@ export const apiRoutes = new Hono<AppEnv>()
   })
 
   .get("/board", async (c) => {
-    const filters = filtersFromQuery(c.req.query());
+    const filters = { ...filtersFromQuery(c.req.query()), columns: c.req.query("columns") };
     return c.json(await inTenant(c, (tx, actor) => getBoard(tx, actor, filters)));
   })
 
@@ -407,6 +421,38 @@ export const apiRoutes = new Hono<AppEnv>()
   .delete("/tokens/:id", async (c) => {
     await inTenant(c, (tx, actor) => revokeToken(tx, actor, c.req.param("id")));
     return c.json({ ok: true });
+  })
+
+  // ---------------------------------------------------------------- agile (staff, agile projects)
+
+  .get("/projects/:id/backlog", async (c) => c.json(await inTenant(c, (tx, actor) => getBacklog(tx, actor, c.req.param("id")))))
+  .get("/projects/:id/sprints", async (c) => c.json({ sprints: await inTenant(c, (tx, actor) => listSprints(tx, actor, c.req.param("id"))) }))
+  .post("/projects/:id/sprints", async (c) => {
+    const body = await readJson(c);
+    return c.json({ sprint: await inTenant(c, (tx, actor) => createSprint(tx, actor, c.req.param("id"), body)) }, 201);
+  })
+  .get("/projects/:id/velocity", async (c) => c.json(await inTenant(c, (tx, actor) => velocity(tx, actor, c.req.param("id")))))
+  .patch("/sprints/:id", async (c) => {
+    const body = await readJson(c);
+    return c.json({ sprint: await inTenant(c, (tx, actor) => updateSprint(tx, actor, c.req.param("id"), body)) });
+  })
+  .delete("/sprints/:id", async (c) => {
+    await inTenant(c, (tx, actor) => deleteSprint(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
+  })
+  .post("/sprints/:id/start", async (c) => {
+    const body = await readJson(c);
+    return c.json({ sprint: await inTenant(c, (tx, actor) => startSprint(tx, actor, c.req.param("id"), body)) });
+  })
+  .post("/sprints/:id/complete", async (c) => {
+    const body = await readJson(c);
+    return c.json(await inTenant(c, (tx, actor) => completeSprint(tx, actor, c.req.param("id"), body)));
+  })
+  .get("/sprints/:id/report", async (c) => c.json(await inTenant(c, (tx, actor) => sprintReport(tx, actor, c.req.param("id")))))
+  /** Move a record into or out of a sprint and/or to a new place in the backlog order. */
+  .post("/records/:idOrKey/plan", async (c) => {
+    const body = await readJson(c);
+    return c.json({ record: await inTenant(c, (tx, actor) => planRecord(tx, actor, c.req.param("idOrKey"), body)) });
   })
 
   // ---------------------------------------------------------------- trash (admins)

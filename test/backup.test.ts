@@ -45,7 +45,7 @@ describe("nightly export", () => {
     expect(keys).toContain(`exports/${ws.slug}/2026-10-07/manifest.json`);
     const manifest = JSON.parse(new TextDecoder().decode((await backups.get(`exports/${ws.slug}/2026-10-07/manifest.json`))!.body as Uint8Array));
     expect(manifest).toMatchObject({ format: "tend247-export", version: 1, encrypted: true, workspace: { slug: ws.slug } });
-    expect(manifest.schema).toMatch(/^0003_/);
+    expect(manifest.schema).toMatch(/^0004_/);
     expect(manifest.tables.records.rows).toBe(3);
     expect(manifest.tables.comments.rows).toBe(3);
     expect(manifest.tables.sessions).toBeUndefined(); // secrets are never exported

@@ -25,6 +25,8 @@ export const WEBHOOK_TOPICS = [
   "approval.decided",
   "sla.warning",
   "sla.breached",
+  "sprint.started",
+  "sprint.completed",
 ] as const;
 
 const endpointSchema = z.object({
@@ -155,9 +157,17 @@ export async function fanOutEvent(
   }
   if (ev.topic.startsWith("sla.")) Object.assign(body, { metric: p.metric, policyName: p.policyName, dueAt: p.dueAt });
   if (ev.topic.startsWith("approval.")) Object.assign(body, { approvalId: p.approvalId, approved: p.approved ?? null });
+  if (ev.topic.startsWith("sprint.") && typeof p.sprintId === "string") {
+    const [s] = await tx`
+      select id, project_id, name, goal, state, start_at, end_at, committed_points::float8 as committed_points, committed_count,
+        completed_points::float8 as completed_points, completed_count
+      from sprints where id = ${p.sprintId}`;
+    body.sprint = s ? { ...s, ...(ev.topic === "sprint.completed" ? { movedOut: p.moved ?? 0 } : {}) } : null;
+  }
+  const projectId = record?.projectId ?? (typeof p.projectId === "string" ? p.projectId : null);
   let n = 0;
   for (const e of endpoints) {
-    if (e.projectId && record?.projectId !== e.projectId) continue;
+    if (e.projectId && projectId !== e.projectId) continue;
     await queue(tx, tenantId, e, ev.topic, body);
     n++;
   }

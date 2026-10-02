@@ -20,18 +20,21 @@ describe("starter templates", () => {
     admin = await new Client(app).signIn(ws.admin.email, ws.slug);
   });
 
-  it("lists the four templates", async () => {
+  it("lists the built-in templates", async () => {
     const r = await admin.get("/api/admin/templates");
-    expect(r.json.templates.map((t: { name: string }) => t.name)).toEqual(["HR Cases", "IT Service Desk", "IT Enhancements", "AP Requests"]);
+    expect(r.json.templates.map((t: { name: string }) => t.name)).toEqual(["HR Cases", "IT Service Desk", "IT Enhancements", "AP Requests", "Agile Software Team"]);
+    expect(r.json.saved).toEqual([]);
   });
 
   it("installs each template as ordinary, published configuration", async () => {
-    for (const t of TEMPLATES) {
-      const r = await admin.post(`/api/admin/templates/${t.key}/install`, {});
+    for (const { key, definition: t } of TEMPLATES) {
+      const r = await admin.post(`/api/admin/templates/${key}/install`, {});
       expect(r.status, JSON.stringify(r.json)).toBe(201);
-      expect(r.json.project).toMatchObject({ key: t.project.key, restricted: t.project.restricted, assignment: t.project.assignment });
+      expect(r.json.project).toMatchObject({ key: t.project.key, restricted: t.project.restricted, assignment: t.project.assignment, agile: t.project.agile });
+      expect(Object.keys(r.json.recordTypeIds)).toEqual(t.recordTypes.map((x) => x.key));
       const wf = await admin.get(`/api/admin/config/workflow/${r.json.recordTypeId}`);
-      expect(wf.json.published.definition.statuses.map((s: { key: string }) => s.key)).toEqual(t.workflow.statuses.map((s) => s.key));
+      const first = t.recordTypes.find((x) => !x.isEpic)!;
+      expect(wf.json.published.definition.statuses.map((s: { key: string }) => s.key)).toEqual(first.workflow.statuses.map((s) => s.key));
       const approval = wf.json.published.definition.transitions.find((x: { approval?: unknown }) => x.approval);
       if (approval) expect(approval.approval.approvers).toEqual([ws.admin.id]);
       if (t.sla) {
@@ -87,9 +90,13 @@ describe("workspace bundles", () => {
     const data = await readWorkspace(sql, sourceId);
     const counts = countRows(data);
     expect(counts.users).toBe(6);
-    expect(counts.projects).toBe(4);
+    expect(counts.projects).toBe(5);
     expect(counts.records).toBeGreaterThanOrEqual(15);
-    expect(counts.automation_rules).toBe(2);
+    expect(counts.automation_rules).toBe(3);
+    // The agile team: two finished sprints, one running, one planned, with a moving burndown.
+    expect(data.tables.sprints!.map((s) => s.state).sort()).toEqual(["active", "completed", "completed", "planned"]);
+    expect(counts.sprint_snapshots).toBeGreaterThanOrEqual(15);
+    expect(data.tables.records!.filter((r) => r.epic_id).length).toBeGreaterThanOrEqual(10);
     expect(counts.approvals).toBeGreaterThanOrEqual(2);
   });
 
@@ -176,7 +183,7 @@ describe("workspace bundles", () => {
       await tx`select set_config('app.tenant_id', ${ws.tenantId}, true)`;
       return tx<{ enabled: boolean }[]>`select enabled from automation_rules`;
     });
-    expect(rules.length).toBe(2);
+    expect(rules.length).toBe(3);
     expect(rules.every((r) => !r.enabled)).toBe(true);
     expect((await sql`select 1 from scheduled_jobs where tenant_id = ${ws.tenantId}`).length).toBe(0);
   });

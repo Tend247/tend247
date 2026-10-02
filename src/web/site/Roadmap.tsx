@@ -45,7 +45,9 @@ const phases: { version: string; name: string; status: Status; items: string[]; 
     status: "shipped",
     items: [
       "Requester portal, REST API, signed webhooks",
-      "Four starter templates and dashboards",
+      "Five starter templates, custom templates and a no-code setup guide",
+      "Agile planning: sprints, backlog, epics, burndown and velocity",
+      "Dashboards",
       "Public demo with 24-hour sandboxes",
       "Read-only phone access by QR pairing",
       "One-command installer, docs, restore drill",
@@ -57,7 +59,7 @@ const phases: { version: string; name: string; status: Status; items: string[]; 
 const readiness: { area: string; items: string[] }[] = [
   {
     area: "Product",
-    items: ["Four starter templates", "Requester portal", "Dashboards for SLA and workload", "REST API and webhooks"],
+    items: ["Five starter templates and a no-code setup guide", "Sprints, backlog and burndown for agile teams", "Requester portal", "Dashboards for SLA and workload", "REST API and webhooks"],
   },
   {
     area: "Trust",

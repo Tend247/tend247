@@ -53,6 +53,7 @@ All bodies are JSON (`Content-Type: application/json`). Ids are UUIDs; records a
 | `GET /api/dashboard?days=30&projectId=` | `records:read` | Counts, aging, throughput, SLA attainment |
 | `GET /api/records/:idOrKey/comments` | `comments:read` | Internal notes only for staff |
 | `GET /api/records/:idOrKey/attachments`, `GET /api/attachments/:id` | `comments:read` | List; download (`?inline=1` to view) |
+| `GET /api/projects/:id/backlog`, `/sprints`, `/velocity`; `GET /api/sprints/:id/report` | `records:read` | Agile projects ([agile.md](agile.md)) |
 
 Filters for `GET /api/records`:
 
@@ -62,13 +63,14 @@ Filters for `GET /api/records`:
 - `createdAfter`, `createdBefore` (ISO dates)
 - `q` (search titles, descriptions and comments)
 - `custom` (JSON, for example `{"vendor":"Acme"}`)
-- `sort`, `limit` (up to 100) and `cursor` (from `nextCursor`)
+- `sprintId` (`active`, `backlog` or an id) and `epicId` (`none` or an id), for agile projects
+- `sort` (`created_desc`, `created_asc`, `updated_desc`, `priority_desc`, `key_asc`, `due_asc`, `rank_asc`), `limit` (up to 100) and `cursor` (from `nextCursor`)
 
 ### Writing
 
 | Method and path | Scope | Body |
 | --- | --- | --- |
-| `POST /api/records` | `records:write` | `{ recordTypeId, title, description?, priority?, assigneeId?, requesterId?, teamId?, custom? }` |
+| `POST /api/records` | `records:write` | `{ recordTypeId, title, description?, priority?, assigneeId?, requesterId?, teamId?, custom?, storyPoints?, epicId? }` |
 | `PATCH /api/records/:idOrKey` | `records:write` | `{ version, ...fields }`; `version` must match (optimistic locking, `409` otherwise) |
 | `POST /api/records/:idOrKey/transitions` | `records:write` | `{ transition, fields?, comment? }` |
 | `POST /api/records/bulk` | `records:write` | `{ ids, patch?, transition? }` |
@@ -76,6 +78,8 @@ Filters for `GET /api/records`:
 | `POST /api/records/:idOrKey/links`, `DELETE /api/links/:id` | `records:write` | `{ to, kind }` with kind `relates`, `blocks`, `duplicates` or `parent` |
 | `POST /api/records/:idOrKey/comments` | `comments:write` | `{ body, internal?, mentions? }` |
 | `POST /api/records/:idOrKey/attachments` | `comments:write` | The raw file as the body. Headers: `X-Tend-Upload: 1`, `X-Filename` (URI-encoded), `Content-Type`, `Content-Length` |
+| `POST /api/records/:idOrKey/plan` | `records:write` | `{ sprintId?, afterId?, beforeId? }`: plan into a sprint and/or rank |
+| `POST /api/projects/:id/sprints`, `PATCH`/`DELETE /api/sprints/:id`, `POST /api/sprints/:id/start`, `/complete` | `records:write` | Sprint lifecycle ([agile.md](agile.md)) |
 
 Records created with a token are marked `via: "api"`.
 
@@ -112,6 +116,7 @@ Admins add endpoints under **Admin > Webhooks**. Each endpoint has:
 - `comment.created`, `attachment.created`
 - `approval.requested`, `approval.decided`
 - `sla.warning`, `sla.breached`
+- `sprint.started`, `sprint.completed` (with a `sprint` object instead of a `record`; `sprint.completed` adds `movedOut`)
 - `ping` (sent by **Send test**)
 
 Every delivery is a `POST` with this body:

@@ -152,6 +152,14 @@ const TOKEN_ROUTES: Rule[] = [
   ["GET", new RegExp(`^/api/records/${ID}/attachments$`), "comments:read"],
   ["GET", new RegExp(`^/api/attachments/${ID}$`), "comments:read"],
   ["POST", new RegExp(`^/api/records/${ID}/attachments$`), "comments:write"],
+  // Agile planning: reading sprints and reports needs records:read; planning changes records:write.
+  ["GET", new RegExp(`^/api/projects/${ID}/(backlog|sprints|velocity)$`), "records:read"],
+  ["GET", new RegExp(`^/api/sprints/${ID}/report$`), "records:read"],
+  ["POST", new RegExp(`^/api/projects/${ID}/sprints$`), "records:write"],
+  ["PATCH", new RegExp(`^/api/sprints/${ID}$`), "records:write"],
+  ["DELETE", new RegExp(`^/api/sprints/${ID}$`), "records:write"],
+  ["POST", new RegExp(`^/api/sprints/${ID}/(start|complete)$`), "records:write"],
+  ["POST", new RegExp(`^/api/records/${ID}/plan$`), "records:write"],
 ];
 
 /** The scope a request needs, "any", or null when tokens may not call it at all. */

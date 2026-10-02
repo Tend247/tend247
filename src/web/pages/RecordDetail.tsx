@@ -3,8 +3,8 @@ import { Link, useNavigate, useParams } from "react-router";
 import { api, ApiError, issuesByField } from "../api.ts";
 import { allRecordTypes, personName, useSession } from "../session.tsx";
 import { FieldInput, formatValue } from "../components/FieldInput.tsx";
-import { ErrorText, SlaBadge, StatusPill, fmtBytes, timeAgo } from "../components/ui.tsx";
-import type { Attachment, AvailableTransition, Comment, Field, Priority, RecordDetailData, RecordEvent, WorkRecord } from "../types.ts";
+import { ErrorText, Progress, SlaBadge, StatusPill, fmtBytes, timeAgo } from "../components/ui.tsx";
+import type { Attachment, AvailableTransition, Comment, Field, Priority, Project, RecordDetailData, RecordEvent, Sprint, WorkRecord } from "../types.ts";
 
 const BUILTIN_LABELS: Record<string, string> = {
   title: "Title",
@@ -13,6 +13,8 @@ const BUILTIN_LABELS: Record<string, string> = {
   assigneeId: "Assignee",
   requesterId: "Requester",
   teamId: "Team",
+  storyPoints: "Story points",
+  epicId: "Epic",
 };
 
 const EVENT_TEXT: Record<string, string> = {
@@ -77,6 +79,7 @@ export function RecordDetail() {
   if (!data) return <p className="muted">Loading…</p>;
   const record = data.record;
   const type = allRecordTypes(projects).find((t) => t.id === record.recordTypeId);
+  const project = projects.find((p) => p.id === record.projectId);
   const fields: Field[] = type?.fields ?? [];
   const statuses = type?.workflow.statuses;
   const fieldLabel = (path: string) =>
@@ -326,6 +329,7 @@ export function RecordDetail() {
                 </>
               )}
             </dl>
+            {staff && project?.agile && <AgilePanel record={record} project={project} isEpic={Boolean(type?.isEpic)} onChange={load} />}
             <Links recordKey={record.key} links={data.links} staff={staff} onChange={load} />
           </div>
         </div>
@@ -367,6 +371,15 @@ export function RecordDetail() {
                 moved it to <strong>{statuses?.find((s) => s.key === ev.data.to)?.name ?? String(ev.data.to)}</strong>
                 {ev.data.approvalId ? " (approved)" : ""}
               </>
+            ) : ev.kind === "planned" ? (
+              ev.data.to ? (
+                <>
+                  planned it into <strong>{String(ev.data.to)}</strong>
+                  {ev.data.reason === "sprint_completed" ? ` when ${String(ev.data.from)} was completed` : ""}
+                </>
+              ) : (
+                <>moved it from {String(ev.data.from)} to the backlog</>
+              )
             ) : ev.kind === "approval_decided" ? (
               <>
                 {String(ev.data.decision)} “{String(ev.data.name)}”
@@ -735,5 +748,132 @@ function Links({ recordKey, links, staff, onChange }: { recordKey: string; links
       )}
       <ErrorText error={error} />
     </div>
+  );
+}
+
+/** Story points, epic and sprint for records of an agile project; an epic lists its work. */
+function AgilePanel({ record, project, isEpic, onChange }: { record: WorkRecord; project: Project; isEpic: boolean; onChange: () => void }) {
+  const [epics, setEpics] = useState<{ id: string; key: string; title: string }[]>([]);
+  const [sprints, setSprints] = useState<Sprint[]>([]);
+  const [children, setChildren] = useState<WorkRecord[]>([]);
+  const [points, setPoints] = useState(record.storyPoints === null ? "" : String(record.storyPoints));
+  const [error, setError] = useState<string | null>(null);
+  const epicTypes = project.recordTypes.filter((t) => t.isEpic).map((t) => t.id);
+
+  useEffect(() => {
+    setPoints(record.storyPoints === null ? "" : String(record.storyPoints));
+  }, [record.storyPoints]);
+  useEffect(() => {
+    if (isEpic) {
+      void api.get<{ items: WorkRecord[] }>(`/api/records?epicId=${record.id}&sort=rank_asc&limit=100`).then((r) => setChildren(r.items));
+      return;
+    }
+    void api.get<{ sprints: Sprint[] }>(`/api/projects/${project.id}/sprints`).then((r) => setSprints(r.sprints));
+    void Promise.all(epicTypes.map((t) => api.get<{ items: WorkRecord[] }>(`/api/records?recordTypeId=${t}&limit=100&sort=key_asc`))).then((pages) =>
+      setEpics(pages.flatMap((p) => p.items).map(({ id, key, title }) => ({ id, key, title }))),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [record.id, project.id, isEpic]);
+
+  async function patch(body: Record<string, unknown>) {
+    setError(null);
+    try {
+      await api.patch(`/api/records/${record.id}`, { version: record.version, ...body });
+      onChange();
+    } catch (err) {
+      setError(Object.values(issuesByField(err))[0] ?? (err as Error).message);
+    }
+  }
+  async function plan(sprintId: string | null) {
+    setError(null);
+    try {
+      await api.post(`/api/records/${record.key}/plan`, { sprintId });
+      onChange();
+    } catch (err) {
+      setError(Object.values(issuesByField(err))[0] ?? (err as Error).message);
+    }
+  }
+  function savePoints() {
+    const n = points.trim() === "" ? null : Number(points);
+    if (n === record.storyPoints || (n !== null && !Number.isFinite(n))) return;
+    void patch({ storyPoints: n });
+  }
+
+  if (isEpic) {
+    const total = children.reduce((a, c) => a + (c.storyPoints ?? 0), 0);
+    const done = children.filter((c) => c.statusCategory === "done").reduce((a, c) => a + (c.storyPoints ?? 0), 0);
+    return (
+      <div className="props links">
+        <div className="props-title">In this epic</div>
+        {children.length === 0 ? (
+          <p className="muted small">Nothing yet. Choose this epic on a story, bug or task.</p>
+        ) : (
+          <>
+            <Progress done={done} total={total} doneCount={children.filter((c) => c.statusCategory === "done").length} count={children.length} />
+            <ul className="plain">
+              {children.map((c) => (
+                <li key={c.id} className="row between small">
+                  <Link to={`/app/records/${c.key}`}>
+                    {c.key} {c.title}
+                  </Link>
+                  <span className="muted">{c.storyPoints ?? "–"}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    );
+  }
+  const sprint = sprints.find((s) => s.id === record.sprintId);
+  return (
+    <dl className="props">
+      <div className="props-title">Planning</div>
+      <dt>Story points</dt>
+      <dd>
+        <input
+          className="points-input"
+          type="number"
+          min={0}
+          max={1000}
+          step={0.5}
+          value={points}
+          aria-label="Story points"
+          onChange={(e) => setPoints(e.target.value)}
+          onBlur={savePoints}
+          onKeyDown={(e) => e.key === "Enter" && (e.currentTarget as HTMLInputElement).blur()}
+        />
+      </dd>
+      <dt>Epic</dt>
+      <dd>
+        <select value={record.epicId ?? ""} onChange={(e) => patch({ epicId: e.target.value || null })} aria-label="Epic">
+          <option value="">None</option>
+          {epics.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.key} {e.title}
+            </option>
+          ))}
+        </select>
+      </dd>
+      <dt>Sprint</dt>
+      <dd>
+        {sprint?.state === "completed" && record.statusCategory === "done" ? (
+          sprint.name
+        ) : (
+          <select value={record.sprintId ?? ""} onChange={(e) => plan(e.target.value || null)} aria-label="Sprint">
+            <option value="">Backlog</option>
+            {sprints
+              .filter((s) => s.state !== "completed")
+              .map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.state === "active" ? " (active)" : ""}
+                </option>
+              ))}
+          </select>
+        )}
+      </dd>
+      {error && <dd className="error small span-2">{error}</dd>}
+    </dl>
   );
 }

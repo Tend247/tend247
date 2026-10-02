@@ -6,14 +6,15 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 ## Status
 
-**1.0 release candidate (v1.0.0-rc.1): all four phases are built.** See the [roadmap](#roadmap). Try it at [tend247.com](https://tend247.com): **Try the live demo** gives you a private copy of Fernhollow Foods for 24 hours.
+**1.0 release candidate (v1.0.0-rc.2): all four phases are built, plus agile planning, custom templates and a guided setup.** See the [roadmap](#roadmap). Try it at [tend247.com](https://tend247.com): **Try the live demo** gives you a private copy of Fernhollow Foods for 24 hours.
 
 | Area | What ships |
 | --- | --- |
 | Workspaces | Row-level security on every table, forced, keyed on a transaction-local workspace setting. The app refuses to start on a role that could bypass it |
 | Sign-in | OIDC single sign-on for staff, one-time email links for requesters, `__Host-` cookie sessions |
 | Configuration | Projects, record types, ten custom field types. **Versioned workflows** (statuses in three categories; transitions guarded by role and required fields; post-transition actions) and **layouts** (create and view forms, sections, required fields). Publish, restore any earlier version, and map statuses when a version removes some |
-| **Starter templates** | HR Cases, IT Service Desk, IT Enhancements and AP Requests: a queue with fields, workflow, form, SLA and team in one click ([docs/templates.md](docs/templates.md)) |
+| **Templates and guided setup** | HR Cases, IT Service Desk, IT Enhancements, AP Requests and Agile Software Team: a queue with fields, workflow, form, SLA and team in one click. **Save any project as a template**, download it and upload it to another workspace. A **setup guide** lets an admin who is not a developer build a project in plain questions ([docs/templates.md](docs/templates.md)) |
+| **Agile planning** | Per project: sprints (plan, start, complete with carry-over), a ranked backlog with drag and drop, story points, epics, a sprint board with swimlanes by epic, assignee or priority, burndown and velocity ([docs/agile.md](docs/agile.md)) |
 | Queues | Teams, a default team per project, manual, self or round-robin assignment. **Restricted projects** (HR, finance) are visible only to their teams, the assignee and the requester |
 | Records | Keys like `FIN-142`, transitions, history with one-click revert of a field change, links (relates, blocks, duplicates, parent), bulk edit |
 | **Requester portal** | A catalog of what employees can ask for, forms built from each type's create layout, "my requests", and a conversation with replies, files and reopen. Internal notes never show |
@@ -39,7 +40,7 @@ Gates:
 - Phase 3: `test/gate-launch.test.ts`. Two template-built functions are worked end to end through the portal and the agent app, with an integration on a scoped token, a read-only phone and a workspace moved by bundle; a stranger gets a demo sandbox in seconds.
 - `test/access.test.ts` covers API tokens and the adversarial cases for phone pairing.
 
-221 tests in all.
+254 tests in all.
 
 ## Quick start (local)
 
@@ -136,12 +137,13 @@ Bindings:
 migrations/          forward-only SQL migrations (run as the schema owner)
 scripts/             setup, migrate, seed, workspace export/import, restore check, rebuild,
                      decrypt an export, license check
-src/worker/          Hono API, auth, tokens, phone pairing, config engine, templates, records,
+src/worker/          Hono API, auth, tokens, phone pairing, config engine, templates, agile, records,
                      workflows, SLAs, approvals, automation, webhooks, email in/out,
                      notifications, dashboards, import, bundles, background jobs, export, demo
-src/web/             React app: staff (/app), portal (/portal), phone views (/m),
+src/web/             React app: staff (/app, planning at /app/plan, setup guide at /app/admin/new),
+                     portal (/portal), phone views (/m),
                      marketing pages and demo (/, /roadmap, /architecture)
-docs/                install, admin guide, templates, API, restore, demo
+docs/                install, admin guide, templates, agile, API, restore, demo
 test/                Vitest suites against real Postgres
 ```
 
@@ -152,7 +154,7 @@ test/                Vitest suites against real Postgres
 | 0 · Foundations | v0.1 | Tenancy, sign-in, roles, audit, config engine, records | Isolation tests pass; adding a field needs no migration ✅ |
 | 1 · Work core | v0.2 | Workflows, layouts, queues, assignment, comments, attachments, views, search | One internal team runs a live queue end to end ✅ (automated; live pilot next) |
 | 2 · Service layer | v0.3 | SLAs, automation, approvals, email in/out, notifications, nightly export | SLA, approval and email flows hold through a pilot week ✅ (automated; pilot week next) |
-| 3 · Launch | v1.0 | Portal, API, webhooks, templates, dashboards, demo, phone access by QR, installer | Pilot teams live on two functions; demo and installer public ✅ (automated; pilots next) |
+| 3 · Launch | v1.0 | Portal, API, webhooks, templates (built-in, saved, files, setup guide), agile planning, dashboards, demo, phone access by QR, installer | Pilot teams live on two functions; demo and installer public ✅ (automated; pilots next) |
 
 ## Contributing and security
 

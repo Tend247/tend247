@@ -8,7 +8,7 @@ import { MemoryBlobStore } from "../src/worker/attachments/blobs.ts";
 
 const sql = appSql();
 const blobs = new MemoryBlobStore();
-const demo = { ...baseConfig.demo, enabled: true, poolSize: 2, maxRecords: 40 };
+const demo = { ...baseConfig.demo, enabled: true, poolSize: 2, maxRecords: 80 };
 const hooks: string[] = [];
 const { app, worker } = makeApp(sql, {
   blobs,
@@ -145,7 +145,7 @@ describe("inside a sandbox", () => {
     const cfg = (await visitor.get("/api/config")).json;
     const typeId = cfg.projects.find((p: { key: string }) => p.key === "ITSD").recordTypes[0].id;
     let status = 201;
-    for (let i = 0; i < 40 && status === 201; i++) {
+    for (let i = 0; i < 80 && status === 201; i++) {
       status = (await visitor.post("/api/records", { recordTypeId: typeId, title: `Filler ${i}`, custom: { site: "office" } })).status;
     }
     expect(status).toBe(403);

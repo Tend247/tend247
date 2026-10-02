@@ -1,4 +1,5 @@
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
+import { lazy, Suspense } from "react";
 import type React from "react";
 import { useSession } from "./session.tsx";
 import { api } from "./api.ts";
@@ -21,13 +22,16 @@ import { AdminSettings } from "./pages/admin/AdminSettings.tsx";
 import { Landing } from "./site/Landing.tsx";
 import { Roadmap } from "./site/Roadmap.tsx";
 import { Architecture } from "./site/Architecture.tsx";
-import { Dashboard } from "./pages/Dashboard.tsx";
 import { Settings } from "./pages/Settings.tsx";
 import { AdminWebhooks } from "./pages/admin/AdminWebhooks.tsx";
 import { AdminImport } from "./pages/admin/AdminImport.tsx";
 import { Portal } from "./portal/Portal.tsx";
 import { Mobile } from "./mobile/Mobile.tsx";
 import { DemoBar, DemoMail } from "./demo/DemoBar.tsx";
+// Loaded on first visit: charts, planning and the setup guide are not on the everyday path.
+const Dashboard = lazy(() => import("./pages/Dashboard.tsx").then((m) => ({ default: m.Dashboard })));
+const Plan = lazy(() => import("./agile/Plan.tsx").then((m) => ({ default: m.Plan })));
+const SetupWizard = lazy(() => import("./pages/admin/SetupWizard.tsx").then((m) => ({ default: m.SetupWizard })));
 import type { Me } from "./types.ts";
 
 /** Where a signed-in person belongs: phones read-only at /m, requesters in the portal, staff in /app. */
@@ -65,7 +69,7 @@ export function App() {
 }
 
 function AppShell() {
-  const { me, reload, unread, site } = useSession();
+  const { me, reload, unread, site, projects } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
   if (!me) return null;
@@ -96,6 +100,7 @@ function AppShell() {
           <NavLink to="/app" end>
             Records
           </NavLink>
+          {staff && projects.some((p) => p.agile) && <NavLink to="/app/plan">Planning</NavLink>}
           {staff && <NavLink to="/app/dashboard">Dashboard</NavLink>}
           {staff && <NavLink to="/app/approvals">Approvals</NavLink>}
           {isAdmin && <NavLink to="/app/admin">Admin</NavLink>}
@@ -113,6 +118,7 @@ function AppShell() {
         </button>
       </header>
       <main className="content">
+        <Suspense fallback={<p className="muted">Loading…</p>}>
         <Routes>
           <Route index element={<RecordList />} />
           <Route path="records/new" element={<RecordNew />} />
@@ -121,6 +127,10 @@ function AppShell() {
           <Route path="settings" element={<Settings />} />
           <Route path="demo-mail" element={me.demo ? <DemoMail /> : <Navigate to="/app" replace />} />
           {staff && <Route path="dashboard" element={<Dashboard />} />}
+          {staff && <Route path="plan" element={<Plan />} />}
+          {staff && <Route path="plan/:projectId" element={<Plan />} />}
+          {staff && <Route path="plan/:projectId/:tab" element={<Plan />} />}
+          {isAdmin && <Route path="admin/new" element={<SetupWizard />} />}
           {isAdmin && <Route path="admin/webhooks" element={<AdminWebhooks />} />}
           {isAdmin && <Route path="admin/import" element={<AdminImport />} />}
           {staff && <Route path="approvals" element={<Approvals />} />}
@@ -137,6 +147,7 @@ function AppShell() {
           {isAdmin && <Route path="trash" element={<Trash />} />}
           <Route path="*" element={<p className="muted">Page not found.</p>} />
         </Routes>
+        </Suspense>
       </main>
     </div>
   );

@@ -79,3 +79,18 @@ export function Empty({ children }: { children: ReactNode }) {
 export function ErrorText({ error }: { error: string | null | undefined }) {
   return error ? <p className="error">{error}</p> : null;
 }
+
+/** Done versus total, by points when there are any, otherwise by count. */
+export function Progress({ done, total, doneCount, count }: { done: number; total: number; doneCount: number; count: number }) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : count > 0 ? Math.round((doneCount / count) * 100) : 0;
+  return (
+    <div className="meter-wrap" title={`${doneCount} of ${count} done${total ? ` · ${done} of ${total} points` : ""}`}>
+      <div className="meter" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Done">
+        <span style={{ width: `${pct}%` }} />
+      </div>
+      <span className="small muted">
+        {doneCount}/{count} done{total ? ` · ${done}/${total} pts` : ""}
+      </span>
+    </div>
+  );
+}

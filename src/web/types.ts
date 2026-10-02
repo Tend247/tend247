@@ -87,6 +87,8 @@ export interface RecordType {
   key: string;
   name: string;
   description: string;
+  /** Epics group stories, bugs and tasks in agile projects. */
+  isEpic: boolean;
   archivedAt: string | null;
   fields: Field[];
   workflow: Workflow;
@@ -103,6 +105,8 @@ export interface Project {
   assignment: "manual" | "round_robin";
   defaultTeamId: string | null;
   inbound: { address: string; recordTypeId: string } | null;
+  /** Sprints, a ranked backlog, story points and epics. */
+  agile: boolean;
   archivedAt: string | null;
   recordTypes: RecordType[];
 }
@@ -147,6 +151,12 @@ export interface WorkRecord {
   firstRespondedAt: string | null;
   resolvedAt: string | null;
   via: "app" | "email" | "automation" | "api";
+  storyPoints: number | null;
+  sprintId: string | null;
+  epicId: string | null;
+  epicKey: string | null;
+  epicTitle: string | null;
+  rank: number | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -281,4 +291,87 @@ export interface ConfigBundle<D = unknown> {
   draft: ConfigVersion<D> | null;
   effective: D | null;
   versions: Omit<ConfigVersion<D>, "definition">[];
+}
+
+// ---------------------------------------------------------------- agile
+
+export interface Sprint {
+  id: string;
+  projectId: string;
+  name: string;
+  goal: string;
+  state: "planned" | "active" | "completed";
+  startAt: string | null;
+  endAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  committedPoints: number | null;
+  committedCount: number | null;
+  completedPoints: number | null;
+  completedCount: number | null;
+  points: number;
+  count: number;
+  donePoints: number;
+  doneCount: number;
+}
+
+export interface EpicProgress {
+  id: string;
+  key: string;
+  title: string;
+  status: string;
+  statusCategory: Category;
+  count: number;
+  doneCount: number;
+  points: number;
+  donePoints: number;
+}
+
+export interface Backlog {
+  project: { id: string; key: string; name: string };
+  sprints: (Sprint & { records: WorkRecord[] })[];
+  backlog: WorkRecord[];
+  epics: EpicProgress[];
+}
+
+export interface SprintReport {
+  sprint: Sprint;
+  days: { index: number; date: string; ideal: number; remaining: number | null; scope: number | null }[];
+  scopeChange: number;
+}
+
+export interface Velocity {
+  sprints: { id: string; name: string; committed: number; completed: number; completedAt: string }[];
+  average: number | null;
+}
+
+// ---------------------------------------------------------------- templates
+
+export interface TemplateSummary {
+  key: string;
+  source?: "builtin" | "saved" | "wizard" | "file";
+  name: string;
+  summary: string;
+  projectKey: string;
+  restricted: boolean;
+  agile: boolean;
+  recordTypes: string[];
+  recordType: string;
+  fields: string[];
+  statuses: string[];
+  approvals: boolean;
+  sla: boolean;
+  automation: number;
+}
+
+export interface SavedTemplate extends Partial<TemplateSummary> {
+  id: string;
+  key: string;
+  name: string;
+  summary: string;
+  source: "saved" | "wizard" | "file";
+  createdAt: string;
+  updatedAt: string;
+  createdByName: string | null;
+  valid: boolean;
 }

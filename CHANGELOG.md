@@ -2,6 +2,41 @@
 
 All notable changes. Versions follow [semantic versioning](https://semver.org/); database migrations are forward-only and run with `npm run db:migrate` before you deploy.
 
+## 1.0.0-rc.2 (2026-10-02)
+
+Agile planning, custom templates and a guided setup. **Migration:** `0004_agile_and_templates.sql`.
+
+### Added
+- **Setup guide** (Admin > Projects > Set up a new project) for admins who are not developers. It starts from scratch, a built-in or saved template, or a file, then asks plain questions:
+  - basics: name, key, team, assignment, visibility, sprints;
+  - types and a palette of ten question types;
+  - steps, with any-to-any or in-order moves, and per-step approval and required answers;
+  - response and resolution targets.
+
+  A review runs the real install in a rolled-back transaction and points each problem at the step that fixes it. The project is then created in one go, and can be kept as a template.
+- **Custom templates:**
+  - **Save as template** on any project, with a list of what was generalised or left out (people, webhooks, the inbound address).
+  - **Your templates**, with install, download and delete.
+  - **Upload a template file** from another workspace.
+  - One template format for built-in, saved, wizard and file templates (`docs/templates.md`), plus admin API routes to list, check, install, save, download and delete. Templates can never contain webhook actions.
+- **Agile planning** per project (`docs/agile.md`):
+  - sprints (plan, start with a goal and length, complete with carry-over to a planned or new sprint or the backlog);
+  - a ranked backlog with drag and drop and keyboard reordering;
+  - story points and epics, with an epics panel;
+  - a sprint board with swimlanes by epic, assignee or priority;
+  - burndown (from daily snapshots, with scope change), velocity, and epic progress.
+
+  Restricted projects keep their plans to their team. The agile API comes with token scopes and `sprint.started` / `sprint.completed` webhook events.
+- **Agile Software Team** built-in template (Story, Bug, Task, Epic).
+- Fernhollow Foods gains the **Wholesale Ordering App** team: two finished sprints, one running with a moving burndown, one planned, three epics and a ranked backlog. The sample seed is now version 2, so demo golden copies rebuild.
+- Line charts can show a partial series and a dashed reference line; a grouped bar chart for velocity.
+
+### Changed
+- Project settings gain **Agile**; record types gain **Epic type**.
+- Records carry `storyPoints`, `sprintId`, `epicId`, `epicKey`, `epicTitle` and `rank`. Lists and boards filter by `sprintId` and `epicId` and sort by `rank_asc`. `GET /api/board?projectId=…&columns=status` draws a project's status board.
+- Workspace bundles and nightly exports include sprints, burndown snapshots and saved templates.
+- The dashboard, planning and setup-guide pages load on first visit, which keeps the main bundle smaller.
+
 ## 1.0.0-rc.1 (2026-10-02)
 
 Phase 3: launch. **Migration:** `0003_launch.sql`.

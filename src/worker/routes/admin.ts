@@ -34,8 +34,11 @@ import { webhookSecret } from "../jobs/webhooks.ts";
 import { notFound } from "../lib/errors.ts";
 import { isUuid } from "../lib/crypto.ts";
 import { parse, parsePatch } from "../lib/validate.ts";
-import { templateSummaries } from "../templates/catalog.ts";
-import { installTemplate } from "../templates/install.ts";
+import { getTemplate, templateSummaries } from "../templates/catalog.ts";
+import { checkDefinition, installDefinition, installTemplate, parseDefinition } from "../templates/install.ts";
+import { summarize } from "../templates/definition.ts";
+import { projectToDefinition } from "../templates/export.ts";
+import { deleteSaved, getSaved, listSaved, saveTemplate } from "../templates/saved.ts";
 import { encodeWorkspace, readWorkspace } from "../workspace/bundle.ts";
 import {
   createEndpoint,
@@ -64,6 +67,14 @@ function ownerParam(c: Ctx): string {
 }
 
 const calendarPatch = calendarSchema.partial().strict();
+
+const saveMeta = z.object({ name: z.string().trim().min(1).max(120), summary: z.string().trim().max(500).optional(), replace: z.boolean().default(false) });
+const saveBody = saveMeta.extend({ definition: z.unknown(), source: z.enum(["wizard", "file"]).default("file") });
+const installBody = z.object({ definition: z.unknown(), options: z.record(z.string(), z.unknown()).default({}) });
+
+function fileSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "template";
+}
 
 /** Run an import; a dry run (the default) reports what would happen, then rolls back. */
 async function withDryRun(c: Ctx, fn: (tx: Tx, actor: Actor) => Promise<ImportReport>): Promise<ImportReport> {
@@ -147,8 +158,74 @@ export const adminRoutes = new Hono<AppEnv>()
     return c.json({ field: await asAdmin(c, (tx, actor) => updateField(tx, actor, c.req.param("id"), body)) });
   })
 
-  // ---------------------------------------------------------------- starter templates
-  .get("/templates", (c) => c.json({ templates: templateSummaries() }))
+  // ---------------------------------------------------------------- templates
+  // Built-ins plus the workspace's saved templates (saved from a project, built in the setup
+  // wizard, or uploaded from a file).
+  .get("/templates", async (c) => {
+    const saved = await asAdmin(c, (tx) => listSaved(tx));
+    return c.json({ templates: templateSummaries(), saved });
+  })
+  .get("/templates/builtin/:key", (c) => {
+    const t = getTemplate(c.req.param("key"));
+    if (!t) throw notFound("Template");
+    return c.json({ key: t.key, definition: t.definition, summary: summarize(t.definition) });
+  })
+  .get("/templates/saved/:id", async (c) => {
+    const t = await asAdmin(c, (tx) => getSaved(tx, c.req.param("id")));
+    return c.json({ ...t, summary: summarize(t.definition) });
+  })
+  .get("/templates/saved/:id/download", async (c) => {
+    const t = await asAdmin(c, async (tx, actor) => {
+      const saved = await getSaved(tx, c.req.param("id"));
+      await audit(tx, actor, { entity: "template", entityId: saved.id, action: "download" });
+      return saved;
+    });
+    return new Response(JSON.stringify(t.definition, null, 2), {
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        "content-disposition": `attachment; filename="${fileSlug(t.name)}.tend247-template.json"`,
+        "cache-control": "no-store",
+      },
+    });
+  })
+  .delete("/templates/saved/:id", async (c) => {
+    await asAdmin(c, (tx, actor) => deleteSaved(tx, actor, c.req.param("id")));
+    return c.json({ ok: true });
+  })
+  /** Save a definition (from the wizard or an uploaded file) as a workspace template. */
+  .post("/templates/saved", async (c) => {
+    const body = parse(saveBody, await readJson(c));
+    const template = await asAdmin(c, async (tx, actor) => {
+      // Check it would install (apart from its project key, which is chosen at install time).
+      const def = await checkDefinition(tx, actor, body.definition, {}, { anyKey: true });
+      return saveTemplate(tx, actor, def, body, body.source);
+    });
+    return c.json({ template }, 201);
+  })
+  /** "Save as template": the project's configuration, without records, people or secrets. */
+  .post("/projects/:id/save-template", async (c) => {
+    const body = await readJson(c);
+    const meta = parse(saveMeta, body);
+    const result = await asAdmin(c, async (tx, actor) => {
+      const { definition, warnings } = await projectToDefinition(tx, c.req.param("id"), meta);
+      await checkDefinition(tx, actor, definition, {}, { anyKey: true });
+      const template = await saveTemplate(tx, actor, definition, meta, "saved");
+      return { template, warnings };
+    });
+    return c.json(result, 201);
+  })
+  /** Dry-run an install: the same checks as the real thing, nothing saved. */
+  .post("/templates/check", async (c) => {
+    const body = parse(installBody, await readJson(c));
+    const definition = await asAdmin(c, (tx, actor) => checkDefinition(tx, actor, body.definition, body.options));
+    return c.json({ ok: true, summary: summarize(definition) });
+  })
+  /** Install a definition directly (the wizard's last step, or a file uploaded and installed at once). */
+  .post("/templates/install", async (c) => {
+    const body = parse(installBody, await readJson(c));
+    const installed = await asAdmin(c, (tx, actor) => installDefinition(tx, actor, parseDefinition(body.definition), body.options));
+    return c.json(installed, 201);
+  })
   .post("/templates/:key/install", async (c) => {
     const body = await readJson(c);
     const installed = await asAdmin(c, (tx, actor) => installTemplate(tx, actor, c.req.param("key"), body));

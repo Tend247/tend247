@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { api, issuesByField } from "../api.ts";
 import { allRecordTypes, useSession } from "../session.tsx";
@@ -19,9 +19,21 @@ export function RecordNew({ linkTo = (key) => `/app/records/${key}`, heading = "
   const [assigneeId, setAssigneeId] = useState("");
   const [teamId, setTeamId] = useState("");
   const [custom, setCustom] = useState<Record<string, unknown>>({});
+  const [storyPoints, setStoryPoints] = useState("");
+  const [epicId, setEpicId] = useState(params.get("epicId") ?? "");
+  const [epics, setEpics] = useState<WorkRecord[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const staff = me?.role !== "requester";
+  const agile = staff && Boolean(type?.project.agile) && !type?.isEpic;
+  const epicTypes = agile ? (projects.find((p) => p.id === type?.projectId)?.recordTypes ?? []).filter((t) => t.isEpic).map((t) => t.id) : [];
+  const epicKey = epicTypes.join(",");
+  useEffect(() => {
+    if (!epicKey) return setEpics([]);
+    void Promise.all(epicKey.split(",").map((t) => api.get<{ items: WorkRecord[] }>(`/api/records?recordTypeId=${t}&statusCategory=todo,in_progress&limit=100`))).then((pages) =>
+      setEpics(pages.flatMap((p) => p.items)),
+    );
+  }, [epicKey]);
 
   if (types.length === 0) {
     return <p className="muted">There is nothing to submit to yet. An admin can add record types under Admin.</p>;
@@ -43,6 +55,7 @@ export function RecordNew({ linkTo = (key) => `/app/records/${key}`, heading = "
         description,
         ...(staff || onForm.has("priority") ? { priority } : {}),
         ...(staff ? { assigneeId: assigneeId || null, ...(teamId ? { teamId } : {}) } : {}),
+        ...(agile ? { storyPoints: storyPoints === "" ? null : Number(storyPoints), epicId: epicId || null } : {}),
         custom: values,
       });
       navigate(linkTo(record.key));
@@ -163,6 +176,30 @@ export function RecordNew({ linkTo = (key) => `/app/records/${key}`, heading = "
           <fieldset className="section">
             <legend>Routing</legend>
             <div className="row wrap">{extras.map(renderField)}</div>
+          </fieldset>
+        )}
+        {agile && (
+          <fieldset className="section">
+            <legend>Planning</legend>
+            <div className="row wrap">
+              <label className="field">
+                Story points
+                <input className="points-input" type="number" min={0} max={1000} step={0.5} value={storyPoints} onChange={(e) => setStoryPoints(e.target.value)} />
+                {errors.storyPoints && <span className="error small">{errors.storyPoints}</span>}
+              </label>
+              <label className="field grow">
+                Epic
+                <select value={epicId} onChange={(e) => setEpicId(e.target.value)}>
+                  <option value="">None</option>
+                  {epics.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.key} {e.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <p className="muted small">New items go to the bottom of the backlog. Plan them into a sprint from Planning.</p>
           </fieldset>
         )}
         <ErrorText error={errors._} />

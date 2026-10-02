@@ -41,7 +41,9 @@ Workflows, layouts and SLA policies are **versioned**:
 
 When a new workflow version removes statuses that records still use, you map them to new ones as part of publishing.
 
-The fastest start is a **starter template** ([templates.md](templates.md)).
+The fastest start is **Set up a new project** on the Projects page: a guided setup in plain questions (form, steps, approvals, targets) that starts from scratch, a template or a file. Or install a template directly. Any project can be saved as a template, downloaded, and uploaded to another workspace ([templates.md](templates.md)).
+
+Turn on **Agile** in a project's settings to plan it in sprints from a ranked backlog, with story points, epics, a sprint board with swimlanes, and burndown and velocity reports. Mark a record type as **Epic type** to group work under it ([agile.md](agile.md)).
 
 ## Teams, SLAs and calendars
 

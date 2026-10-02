@@ -17,6 +17,7 @@ import { nextRoundRobin } from "../teams/service.ts";
 import { syncSla } from "../sla/service.ts";
 import { PRIORITIES, type Priority } from "./constants.ts";
 import { loadRecord, RECORD_COLUMNS, visibleTo, type RecordRow } from "./access.ts";
+import { touchSprint } from "../agile/snapshots.ts";
 
 export { PRIORITIES, type Priority, type RecordRow };
 
@@ -35,6 +36,12 @@ const title = z
   .transform((v) => v.replace(/[\u0000-\u001f\u007f]+/g, " ").trim())
   .pipe(z.string().min(1).max(500));
 
+const storyPoints = z
+  .number()
+  .min(0)
+  .max(1000)
+  .refine((n) => Math.abs(n * 10 - Math.round(n * 10)) < 1e-9, "Use at most one decimal place");
+
 const createSchema = z.object({
   recordTypeId: uuid,
   title,
@@ -44,6 +51,8 @@ const createSchema = z.object({
   requesterId: uuid.nullable().optional(),
   teamId: uuid.nullable().optional(),
   custom: z.record(z.string(), z.unknown()).optional(),
+  storyPoints: storyPoints.nullable().optional(),
+  epicId: uuid.nullable().optional(),
 });
 
 const patchFields = {
@@ -54,6 +63,8 @@ const patchFields = {
   requesterId: uuid.nullable(),
   teamId: uuid.nullable(),
   custom: z.record(z.string(), z.unknown()),
+  storyPoints: storyPoints.nullable(),
+  epicId: uuid.nullable(),
 };
 export const recordPatchSchema = z.object(patchFields).partial().strict();
 export type RecordPatch = z.infer<typeof recordPatchSchema>;
@@ -62,6 +73,25 @@ const patchSchema = recordPatchSchema.extend({ version: z.number().int().min(1) 
 async function assertTeam(tx: Tx, teamId: string, field = "teamId"): Promise<void> {
   const [t] = await tx`select 1 from teams where id = ${teamId} and archived_at is null`;
   if (!t) throw invalid([{ field, message: "Unknown team" }]);
+}
+
+/** An epic must be a live record of an epic type in the same project, and epics have no epic. */
+async function assertEpic(tx: Tx, projectId: string, recordTypeId: string, epicId: string, selfId?: string): Promise<void> {
+  const issue = (message: string) => invalid([{ field: "epicId", message }]);
+  if (epicId === selfId) throw issue("A record cannot be its own epic");
+  const [own] = await tx<{ isEpic: boolean }[]>`select is_epic from record_types where id = ${recordTypeId}`;
+  if (own?.isEpic) throw issue("Epics cannot belong to another epic");
+  const [e] = await tx<{ projectId: string; isEpic: boolean }[]>`
+    select r.project_id, rt.is_epic from records r join record_types rt on rt.id = r.record_type_id
+    where r.id = ${epicId} and r.deleted_at is null`;
+  if (!e || !e.isEpic) throw issue("Choose an epic");
+  if (e.projectId !== projectId) throw issue("The epic must be in the same project");
+}
+
+/** Next backlog position at the bottom of a project. */
+async function bottomRank(tx: Tx, projectId: string): Promise<number> {
+  const [r] = await tx<{ max: number | null }[]>`select max(rank) as max from records where project_id = ${projectId}`;
+  return (r?.max ?? 0) + 1024;
 }
 
 async function event(tx: Tx, actor: Actor, recordId: string, kind: string, data: Record<string, unknown>): Promise<void> {
@@ -99,13 +129,15 @@ export async function createRecord(tx: Tx, actor: Actor, input: unknown): Promis
   const fields = await listFields(tx, recordType.id, { includeArchived: true });
   const issues: FieldIssue[] = [];
 
-  let { description, priority, assigneeId = null, requesterId = actor.userId, teamId } = data;
+  let { description, priority, assigneeId = null, requesterId = actor.userId, teamId, storyPoints = null, epicId = null } = data;
   let customInput = data.custom;
   if (!staff) {
     // Requesters file for themselves, cannot route, and set only what the create form shows.
     requesterId = actor.userId;
     assigneeId = null;
     teamId = undefined;
+    storyPoints = null;
+    epicId = null;
     if (!onForm.has("priority")) priority = undefined;
     if (!onForm.has("description")) description = "";
     for (const key of Object.keys(customInput ?? {})) {
@@ -122,6 +154,8 @@ export async function createRecord(tx: Tx, actor: Actor, input: unknown): Promis
   if (issues.length) throw invalid(issues);
 
   if (teamId) await assertTeam(tx, teamId);
+  if (epicId) await assertEpic(tx, project.id, recordType.id, epicId);
+  const rank = project.agile ? await bottomRank(tx, project.id) : null;
   const team = teamId === undefined ? project.defaultTeamId : teamId;
   const refs = [...custom.userRefs];
   if (assigneeId) refs.push({ field: "assigneeId", id: assigneeId });
@@ -138,11 +172,12 @@ export async function createRecord(tx: Tx, actor: Actor, input: unknown): Promis
   const [row] = await tx<{ id: string }[]>`
     insert into records (
       tenant_id, project_id, record_type_id, number, key, title, description, priority, status, status_category,
-      workflow_version, assignee_id, requester_id, team_id, custom, created_by, via
+      workflow_version, assignee_id, requester_id, team_id, custom, created_by, via, story_points, epic_id, rank
     ) values (
       ${actor.tenantId}, ${project.id}, ${recordType.id}, ${counter!.num}, ${key}, ${data.title},
       ${description}, ${priority ?? "medium"}, ${initial.key}, ${initial.category}, ${workflow.version},
-      ${assigneeId}, ${requesterId}, ${team}, ${tx.json(custom.values as never)}, ${actor.userId}, ${actor.via ?? "app"}
+      ${assigneeId}, ${requesterId}, ${team}, ${tx.json(custom.values as never)}, ${actor.userId}, ${actor.via ?? "app"},
+      ${storyPoints}, ${epicId}, ${rank}
     )
     returning id`;
   const record = (await loadRecord(tx, { ...actor, role: "admin" }, row!.id))!;
@@ -154,6 +189,8 @@ export async function createRecord(tx: Tx, actor: Actor, input: unknown): Promis
     teamId: record.teamId,
     custom: record.custom,
     via: record.via,
+    ...(record.storyPoints !== null ? { storyPoints: record.storyPoints } : {}),
+    ...(record.epicId ? { epicId: record.epicId } : {}),
   });
   await emit(
     tx,
@@ -174,7 +211,7 @@ export async function getRecord(tx: Tx, actor: Actor, idOrKey: string): Promise<
   return r;
 }
 
-export const SORTS = ["created_desc", "created_asc", "updated_desc", "priority_desc", "key_asc", "due_asc"] as const;
+export const SORTS = ["created_desc", "created_asc", "updated_desc", "priority_desc", "key_asc", "due_asc", "rank_asc"] as const;
 export type Sort = (typeof SORTS)[number];
 
 export interface ListFilters {
@@ -193,6 +230,10 @@ export interface ListFilters {
   q?: string;
   /** Exact-match filter on custom values, e.g. {"vendor":"Acme"}; served by the GIN index. */
   custom?: Record<string, unknown>;
+  /** Agile: a sprint id, "active" (the project's active sprint) or "backlog" (in no sprint). */
+  sprintId?: string;
+  /** Agile: records in this epic, or "none". */
+  epicId?: string;
   sort?: Sort;
   limit?: number;
   cursor?: string;
@@ -234,6 +275,8 @@ function whereFor(tx: Tx, actor: Actor, f: ListFilters) {
   const assigneeId = id("assigneeId", f.assigneeId, ["me", "none"]);
   const teamId = id("teamId", f.teamId, ["mine", "none"]);
   const requesterId = id("requesterId", f.requesterId, ["me"]);
+  const sprintId = id("sprintId", f.sprintId, ["active", "backlog"]);
+  const epicId = id("epicId", f.epicId, ["none"]);
   for (const k of ["createdAfter", "createdBefore"] as const) {
     if (f[k] && (!DATE_ONLY.test(f[k]!) || Number.isNaN(Date.parse(f[k]!)))) issues.push({ field: k, message: "Must be a date" });
   }
@@ -277,6 +320,13 @@ function whereFor(tx: Tx, actor: Actor, f: ListFilters) {
                  and c.search @@ websearch_to_tsquery('simple', ${q})))`);
   }
   if (f.custom && Object.keys(f.custom).length) conds.push(tx`records.custom @> ${tx.json(f.custom as never)}`);
+  if (sprintId === "active") {
+    conds.push(tx`records.sprint_id in (select s.id from sprints s where s.state = 'active' and s.project_id = records.project_id)`);
+  } else if (sprintId === "backlog") {
+    conds.push(tx`records.sprint_id is null`);
+  } else if (sprintId) conds.push(tx`records.sprint_id = ${sprintId}`);
+  if (epicId === "none") conds.push(tx`records.epic_id is null`);
+  else if (epicId) conds.push(tx`records.epic_id = ${epicId}`);
   return conds.reduce((acc, c) => tx`${acc} and ${c}`);
 }
 
@@ -291,6 +341,8 @@ function orderFor(tx: Tx, sort: Sort) {
       return tx`array_position(array['urgent','high','medium','low'], records.priority), records.seq desc`;
     case "key_asc":
       return tx`records.project_id, records.number asc`;
+    case "rank_asc":
+      return tx`records.rank asc nulls last, records.seq asc`;
     case "due_asc":
       return tx`(select min(sc.due_at) from sla_clocks sc where sc.record_id = records.id and sc.status = 'running') asc nulls last, records.seq desc`;
     default:
@@ -309,7 +361,7 @@ export async function listRecords(tx: Tx, actor: Actor, filters: ListFilters): P
   const page = bySeq && cursor.seq ? tx`and records.seq < ${cursor.seq}::bigint` : tx``;
   const offset = bySeq ? 0 : (cursor.offset ?? 0);
   const rows = await tx<RecordRow[]>`
-    select ${RECORD_COLUMNS(tx)} from records where ${where} ${page}
+    select ${RECORD_COLUMNS(tx, actor)} from records where ${where} ${page}
     order by ${orderFor(tx, sort)} limit ${limit + 1} offset ${offset}`;
   const items = rows.slice(0, limit);
   let nextCursor: string | null = null;
@@ -321,11 +373,23 @@ export async function listRecords(tx: Tx, actor: Actor, filters: ListFilters): P
  * Records grouped into board columns: the workflow's statuses when a record type is given,
  * otherwise the three status categories. Each column carries its total and up to 50 cards.
  */
-export async function getBoard(tx: Tx, actor: Actor, filters: ListFilters & { recordTypeId?: string }) {
+export async function getBoard(tx: Tx, actor: Actor, filters: ListFilters & { recordTypeId?: string; columns?: string }) {
   const where = whereFor(tx, actor, filters);
   let columns: { key: string; name: string; category: string }[];
   let groupBy;
-  if (filters.recordTypeId) {
+  if (!filters.recordTypeId && filters.projectId && filters.columns === "status") {
+    // A project's board by status: every status its (non-epic) record types use, in workflow
+    // order, grouped by category. Agile projects share one workflow across their types.
+    const types = await tx<{ id: string }[]>`
+      select id from record_types where project_id = ${filters.projectId} and archived_at is null and not is_epic order by created_at`;
+    const seen = new Map<string, { key: string; name: string; category: string }>();
+    for (const t of types) {
+      for (const st of (await getWorkflow(tx, t.id)).definition.statuses) if (!seen.has(st.key)) seen.set(st.key, st);
+    }
+    const order = ["todo", "in_progress", "done"];
+    columns = [...seen.values()].sort((a, b) => order.indexOf(a.category) - order.indexOf(b.category));
+    groupBy = tx`records.status`;
+  } else if (filters.recordTypeId) {
     await getRecordType(tx, filters.recordTypeId.toLowerCase());
     const wf = await getWorkflow(tx, filters.recordTypeId.toLowerCase());
     columns = wf.definition.statuses.map((s) => ({ key: s.key, name: s.name, category: s.category }));
@@ -340,8 +404,8 @@ export async function getBoard(tx: Tx, actor: Actor, filters: ListFilters & { re
   }
   const rows = await tx<(RecordRow & { col: string; total: number })[]>`
     select * from (
-      select ${RECORD_COLUMNS(tx)}, ${groupBy} as col,
-             row_number() over (partition by ${groupBy} order by ${orderFor(tx, "priority_desc")}) as rn,
+      select ${RECORD_COLUMNS(tx, actor)}, ${groupBy} as col,
+             row_number() over (partition by ${groupBy} order by ${orderFor(tx, filters.sort ?? "priority_desc")}) as rn,
              count(*) over (partition by ${groupBy})::int as total
       from records where ${where}
     ) ranked where rn <= 50`;
@@ -355,7 +419,7 @@ export async function getBoard(tx: Tx, actor: Actor, filters: ListFilters & { re
 
 // ---------------------------------------------------------------- update
 
-const TRACKED = ["title", "description", "priority", "assigneeId", "requesterId", "teamId"] as const;
+const TRACKED = ["title", "description", "priority", "assigneeId", "requesterId", "teamId", "storyPoints", "epicId"] as const;
 
 /**
  * Apply a patch to a loaded, locked record: validation, history, outbox and SLA. No
@@ -370,6 +434,7 @@ export async function applyPatch(tx: Tx, actor: Actor, current: RecordRow, patch
   if (patch.requesterId) refs.push({ field: "requesterId", id: patch.requesterId });
   await assertUsersExist(tx, refs);
   if (patch.teamId && patch.teamId !== current.teamId) await assertTeam(tx, patch.teamId);
+  if (patch.epicId && patch.epicId !== current.epicId) await assertEpic(tx, current.projectId, current.recordTypeId, patch.epicId, current.id);
 
   const next = {
     title: patch.title ?? current.title,
@@ -378,6 +443,8 @@ export async function applyPatch(tx: Tx, actor: Actor, current: RecordRow, patch
     assigneeId: patch.assigneeId === undefined ? current.assigneeId : patch.assigneeId,
     requesterId: patch.requesterId === undefined ? current.requesterId : patch.requesterId,
     teamId: patch.teamId === undefined ? current.teamId : patch.teamId,
+    storyPoints: patch.storyPoints === undefined ? current.storyPoints : patch.storyPoints,
+    epicId: patch.epicId === undefined ? current.epicId : patch.epicId,
   };
   const changes: { field: string; from: unknown; to: unknown }[] = [];
   for (const k of TRACKED) {
@@ -395,6 +462,7 @@ export async function applyPatch(tx: Tx, actor: Actor, current: RecordRow, patch
     update records set
       title = ${next.title}, description = ${next.description}, priority = ${next.priority},
       assignee_id = ${next.assigneeId}, requester_id = ${next.requesterId}, team_id = ${next.teamId},
+      story_points = ${next.storyPoints}, epic_id = ${next.epicId},
       custom = ${tx.json(custom.values as never)},
       version = version + 1, updated_at = clock_timestamp()
     where id = ${current.id}`;
@@ -414,6 +482,7 @@ export async function applyPatch(tx: Tx, actor: Actor, current: RecordRow, patch
     actor,
   );
   if (next.priority !== current.priority) await syncSla(tx, updated);
+  if (next.storyPoints !== current.storyPoints) await touchSprint(tx, updated.sprintId);
   return updated;
 }
 
@@ -463,6 +532,7 @@ export async function deleteRecord(tx: Tx, actor: Actor, idOrKey: string): Promi
     update records set deleted_at = now(), deleted_by = ${actor.userId}, version = version + 1, updated_at = clock_timestamp()
     where id = ${current.id}`;
   await event(tx, actor, current.id, "deleted", {});
+  await touchSprint(tx, current.sprintId);
   await emit(tx, actor.tenantId, "record.deleted", { recordId: current.id, key: current.key, actorId: actor.userId }, actor);
   return (await loadRecord(tx, { ...actor, role: "admin" }, current.id, { includeDeleted: true }))!;
 }
@@ -478,6 +548,7 @@ export async function restoreRecord(tx: Tx, actor: Actor, idOrKey: string): Prom
   await emit(tx, actor.tenantId, "record.restored", { recordId: current.id, key: current.key, actorId: actor.userId }, actor);
   const restored = (await loadRecord(tx, actor, current.id))!;
   await syncSla(tx, restored);
+  await touchSprint(tx, restored.sprintId);
   return restored;
 }
 

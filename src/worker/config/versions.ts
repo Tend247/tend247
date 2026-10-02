@@ -3,6 +3,7 @@
 // earlier version; every publish is audited and earlier versions are kept.
 import { z } from "zod";
 import type { Tx } from "../db/client.ts";
+import { touchSprint } from "../agile/snapshots.ts";
 import { audit, type Actor } from "../audit.ts";
 import { AppError, invalid, notFound, type FieldIssue } from "../lib/errors.ts";
 import { parse, configKey } from "../lib/validate.ts";
@@ -290,6 +291,11 @@ async function remapStatuses(
     update records r set status_category = s.category
     from jsonb_to_recordset(${tx.json(cats as never)}) as s(key text, category text)
     where r.record_type_id = ${recordTypeId} and r.status = s.key and r.status_category <> s.category`;
+  // Remapped or recategorised statuses can change what is done: redraw today's burndown.
+  const active = await tx<{ id: string }[]>`
+    select distinct s.id from sprints s join records r on r.sprint_id = s.id
+    where s.state = 'active' and r.record_type_id = ${recordTypeId}`;
+  for (const sp of active) await touchSprint(tx, sp.id);
 }
 
 export async function publishDraft(tx: Tx, actor: Actor, kind: ConfigKind, ownerId: string, options: unknown) {

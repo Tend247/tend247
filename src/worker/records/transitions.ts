@@ -10,6 +10,7 @@ import { getWorkflow } from "../config/versions.ts";
 import { BUILTIN_FIELDS, statusOf, type WorkflowDefinition, type WorkflowTransition } from "../workflow/definition.ts";
 import { syncSla } from "../sla/service.ts";
 import { requestApproval } from "../approvals/service.ts";
+import { touchSprint } from "../agile/snapshots.ts";
 import { createComment } from "../comments/service.ts";
 import { loadRecord, type RecordRow } from "./access.ts";
 import { applyPatch, recordEvent, recordPatchSchema, type RecordPatch } from "./service.ts";
@@ -109,6 +110,15 @@ export async function applyTransition(
     name: t.name,
     ...extra,
   });
+  if (to.category !== record.statusCategory) await touchSprint(tx, record.sprintId);
+  if (record.sprintId && record.statusCategory === "done" && to.category !== "done") {
+    // Reopened after its sprint was completed: back to the backlog, where it can be planned again.
+    const [sprint] = await tx<{ name: string; state: string }[]>`select name, state from sprints where id = ${record.sprintId}`;
+    if (sprint?.state === "completed") {
+      await tx`update records set sprint_id = null where id = ${record.id}`;
+      await recordEvent(tx, actor, record.id, "planned", { from: sprint.name, to: null, reason: "reopened" });
+    }
+  }
   let updated = (await loadRecord(tx, { ...actor, role: "admin" }, record.id))!;
 
   // Post-transition actions. A misconfigured action is logged, never blocks the move.

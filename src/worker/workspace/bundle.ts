@@ -243,6 +243,7 @@ export async function importWorkspace(sql: Sql, data: WorkspaceData, opts: Impor
               ${opts.demo?.state === "claimed" ? new Date() : null}, ${opts.demo?.state === "claimed" ? new Date() : null})`;
     const columns = await insertableColumns(tx as unknown as Tx);
     const pendingApprovals: { id: string; p: string }[] = [];
+    const epics: { id: string; e: string }[] = [];
 
     for (const table of WORKSPACE_TABLES) {
       const source = data.tables[table.name] ?? [];
@@ -261,6 +262,11 @@ export async function importWorkspace(sql: Sql, data: WorkspaceData, opts: Impor
         if (table.name === "records" && row.pending_approval_id) {
           pendingApprovals.push({ id: row.id as string, p: row.pending_approval_id as string });
           row.pending_approval_id = null;
+        }
+        // A record's epic may come later in the file; link it once every record exists.
+        if (table.name === "records" && row.epic_id) {
+          epics.push({ id: row.id as string, e: row.epic_id as string });
+          row.epic_id = null;
         }
         if (table.name === "attachments") {
           const oldKey = raw.storage_key as string;
@@ -287,6 +293,12 @@ export async function importWorkspace(sql: Sql, data: WorkspaceData, opts: Impor
       await tx`
         update records set pending_approval_id = x.p
         from jsonb_to_recordset(${tx.json(pendingApprovals)}) as x(id uuid, p uuid)
+        where records.id = x.id`;
+    }
+    if (epics.length) {
+      await tx`
+        update records set epic_id = x.e
+        from jsonb_to_recordset(${tx.json(epics)}) as x(id uuid, e uuid)
         where records.id = x.id`;
     }
     if (opts.inert || opts.disableWebhooks) await tx`update webhook_endpoints set enabled = false`;

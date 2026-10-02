@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router";
-import { api, issuesByField } from "../../api.ts";
+import { Link, useLocation, useParams } from "react-router";
+import { api, ApiError, issuesByField } from "../../api.ts";
 import { useSession } from "../../session.tsx";
 import type { Field, FieldType, Project } from "../../types.ts";
 import { ErrorText } from "../../components/ui.tsx";
@@ -24,6 +24,7 @@ export function AdminProject() {
   const { id = "" } = useParams();
   const { projects, reload } = useSession();
   const project = projects.find((p) => p.id === id);
+  const created = Boolean((useLocation().state as { created?: boolean } | null)?.created);
   const [rtKey, setRtKey] = useState("");
   const [rtName, setRtName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,11 +46,28 @@ export function AdminProject() {
   return (
     <section>
       <AdminNav />
-      <p className="muted small">{project.key}</p>
-      <h1>{project.name}</h1>
+      {created && (
+        <p className="notice-box">
+          {project.name} is ready. New requests can be raised straight away; adjust anything below.
+        </p>
+      )}
+      <div className="row between wrap">
+        <div>
+          <p className="muted small">{project.key}</p>
+          <h1>{project.name}</h1>
+        </div>
+        <div className="row">
+          {project.agile && (
+            <Link className="button" to={`/app/plan/${project.id}/backlog`}>
+              Open planning
+            </Link>
+          )}
+          <SaveAsTemplate projectId={project.id} defaultName={project.name} />
+        </div>
+      </div>
       <ProjectSettings project={project} />
       {project.recordTypes.map((t) => (
-        <RecordTypeFields key={t.id} recordTypeId={t.id} name={t.name} />
+        <RecordTypeFields key={t.id} recordTypeId={t.id} name={t.name} isEpic={t.isEpic} agile={project.agile} />
       ))}
       <h2>Add a record type</h2>
       <form onSubmit={addType} className="row wrap">
@@ -81,6 +99,7 @@ function ProjectSettings({ project }: { project: Project }) {
     defaultTeamId: project.defaultTeamId ?? "",
     inboundAddress: project.inbound?.address ?? "",
     inboundType: project.inbound?.recordTypeId ?? project.recordTypes[0]?.id ?? "",
+    agile: project.agile,
   });
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +115,7 @@ function ProjectSettings({ project }: { project: Project }) {
         requesterAccess: form.requesterAccess,
         assignment: form.assignment,
         defaultTeamId: form.defaultTeamId || null,
+        agile: form.agile,
         inbound: form.inboundAddress.trim() ? { address: form.inboundAddress.trim(), recordTypeId: form.inboundType } : null,
       });
       await reload();
@@ -141,6 +161,10 @@ function ProjectSettings({ project }: { project: Project }) {
         <input type="checkbox" checked={form.requesterAccess} onChange={(e) => setForm({ ...form, requesterAccess: e.target.checked })} />
         Requesters can submit to this project
       </label>
+      <label className="inline">
+        <input type="checkbox" checked={form.agile} onChange={(e) => setForm({ ...form, agile: e.target.checked })} />
+        Agile: plan in sprints from a ranked backlog, with story points, epics, a sprint board and burndown
+      </label>
       <div className="row wrap">
         <label className="field grow">
           Inbound email address (the part before @; mail to it creates records)
@@ -168,7 +192,7 @@ function ProjectSettings({ project }: { project: Project }) {
   );
 }
 
-function RecordTypeFields({ recordTypeId, name }: { recordTypeId: string; name: string }) {
+function RecordTypeFields({ recordTypeId, name, isEpic, agile }: { recordTypeId: string; name: string; isEpic: boolean; agile: boolean }) {
   const { reload } = useSession();
   const [fields, setFields] = useState<Field[]>([]);
   const [draft, setDraft] = useState({ key: "", label: "", type: "text" as FieldType, required: false, choices: "", currency: "USD" });
@@ -222,8 +246,28 @@ function RecordTypeFields({ recordTypeId, name }: { recordTypeId: string; name: 
   return (
     <div className="card">
       <div className="row between">
-        <h2>{name}</h2>
+        <h2>
+          {name}
+          {agile && isEpic && <span className="tag-mini">epic</span>}
+        </h2>
         <div className="row">
+          {agile && (
+            <label className="inline small">
+              <input
+                type="checkbox"
+                checked={isEpic}
+                onChange={async (e) => {
+                  try {
+                    await api.patch(`/api/admin/record-types/${recordTypeId}`, { isEpic: e.target.checked });
+                    await reload();
+                  } catch (err) {
+                    setErrors({ _: (err as Error).message });
+                  }
+                }}
+              />
+              Epic type
+            </label>
+          )}
           <Link className="button" to={`/app/admin/record-types/${recordTypeId}/workflow`}>
             Workflow
           </Link>
@@ -318,4 +362,92 @@ function RecordTypeFields({ recordTypeId, name }: { recordTypeId: string; name: 
 
 function autoKey(label: string): string {
   return label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").replace(/^(\d)/, "f_$1");
+}
+
+/** Save this project's setup as a reusable template (no records, people or secrets). */
+function SaveAsTemplate({ projectId, defaultName }: { projectId: string; defaultName: string }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(defaultName);
+  const [summary, setSummary] = useState("");
+  const [result, setResult] = useState<{ id: string; warnings: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  async function save(e: FormEvent, replace = false) {
+    e.preventDefault();
+    setError(null);
+    try {
+      const r = await api.post<{ template: { id: string }; warnings: string[] }>(`/api/admin/projects/${projectId}/save-template`, { name, summary: summary || undefined, replace });
+      setResult({ id: r.template.id, warnings: r.warnings });
+      setConflict(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === "conflict" && /already exists/.test(err.message)) setConflict(true);
+      setError(err instanceof ApiError ? (Object.values(issuesByField(err))[0] ?? err.message) : (err as Error).message);
+    }
+  }
+  return (
+    <div className="popover-anchor">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        Save as template
+      </button>
+      {open && renderDialog()}
+    </div>
+  );
+
+  function renderDialog() {
+    return (
+    <div className="popover card stack" role="dialog" aria-label="Save as template">
+      {result ? (
+        <>
+          <h3>Saved</h3>
+          <p className="small">It is listed under Your templates on the Projects page, ready to install again or download for another workspace.</p>
+          {result.warnings.length > 0 && (
+            <>
+              <p className="small">Not included (set these again after installing):</p>
+              <ul className="small">
+                {result.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="row">
+            <a className="button" href={`/api/admin/templates/saved/${result.id}/download`} download>
+              Download file
+            </a>
+            <button type="button" className="subtle" onClick={() => (setOpen(false), setResult(null))}>
+              Close
+            </button>
+          </div>
+        </>
+      ) : (
+        <form className="stack" onSubmit={(e) => save(e)}>
+          <h3>Save as template</h3>
+          <p className="muted small">Copies the types, fields, steps, form, targets and automation. Records, people and webhook addresses stay here.</p>
+          <label className="field">
+            Name
+            <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} />
+          </label>
+          <label className="field">
+            Summary (optional)
+            <input value={summary} onChange={(e) => setSummary(e.target.value)} maxLength={500} />
+          </label>
+          <ErrorText error={error} />
+          <div className="row">
+            <button className="primary" type="submit">
+              Save
+            </button>
+            {conflict && (
+              <button type="button" onClick={(e) => save(e as unknown as FormEvent, true)}>
+                Replace it
+              </button>
+            )}
+            <button type="button" className="subtle" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+    );
+  }
 }

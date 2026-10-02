@@ -31,6 +31,8 @@ export interface Project {
   defaultTeamId: string | null;
   /** Inbound email address (local part) that creates records, and the type it creates. */
   inbound: { address: string; recordTypeId: string } | null;
+  /** Agile features: sprints, a ranked backlog, story points and epics. */
+  agile: boolean;
   archivedAt: Date | null;
   createdAt: Date;
 }
@@ -41,6 +43,8 @@ export interface RecordType {
   key: string;
   name: string;
   description: string;
+  /** Records of this type are epics: they group other records and are never planned into sprints. */
+  isEpic: boolean;
   archivedAt: Date | null;
 }
 
@@ -73,6 +77,7 @@ const projectPatchSchema = z
     restricted: z.boolean(),
     requesterAccess: z.boolean(),
     assignment: z.enum(["manual", "round_robin"]),
+    agile: z.boolean(),
     defaultTeamId: uuid.nullable(),
     inbound: z
       .object({
@@ -94,7 +99,7 @@ const recordTypeSchema = z.object({
   description: z.string().max(5000).default(""),
 });
 const recordTypePatchSchema = z
-  .object({ name: z.string().trim().min(1).max(200), description: z.string().max(5000), archived: z.boolean() })
+  .object({ name: z.string().trim().min(1).max(200), description: z.string().max(5000), archived: z.boolean(), isEpic: z.boolean() })
   .partial()
   .strict();
 
@@ -102,7 +107,7 @@ const recordTypePatchSchema = z
 
 const PROJECT_COLUMNS = (tx: Tx) => tx`
   p.id, p.key, p.name, p.description, p.restricted, p.requester_access, p.assignment, p.default_team_id,
-  p.archived_at, p.created_at,
+  p.agile, p.archived_at, p.created_at,
   (select jsonb_build_object('address', ia.address, 'recordTypeId', ia.record_type_id)
      from inbound_addresses ia where ia.tenant_id = p.tenant_id and ia.project_id = p.id) as inbound`;
 
@@ -147,6 +152,7 @@ export async function updateProject(tx: Tx, actor: Actor, id: string, input: unk
       restricted = ${patch.restricted ?? before.restricted},
       requester_access = ${patch.requesterAccess ?? before.requesterAccess},
       assignment = ${patch.assignment ?? before.assignment},
+      agile = ${patch.agile ?? before.agile},
       default_team_id = ${defaultTeamId},
       archived_at = ${archivedAt}
     where id = ${id}`;
@@ -171,7 +177,7 @@ export async function updateProject(tx: Tx, actor: Actor, id: string, input: unk
 
 export async function getRecordType(tx: Tx, id: string): Promise<RecordType> {
   const [rt] = await tx<RecordType[]>`
-    select id, project_id, key, name, description, archived_at from record_types where id = ${id}`;
+    select id, project_id, key, name, description, is_epic, archived_at from record_types where id = ${id}`;
   if (!rt) throw notFound("Record type");
   return rt;
 }
@@ -182,7 +188,7 @@ export async function createRecordType(tx: Tx, actor: Actor, projectId: string, 
   const [rt] = await tx<RecordType[]>`
     insert into record_types (tenant_id, project_id, key, name, description)
     values (${actor.tenantId}, ${projectId}, ${data.key}, ${data.name}, ${data.description})
-    returning id, project_id, key, name, description, archived_at`;
+    returning id, project_id, key, name, description, is_epic, archived_at`;
   await audit(tx, actor, { entity: "record_type", entityId: rt!.id, action: "create", after: rt });
   // Every record type starts with the default workflow as version 1.
   await publishDefinition(tx, actor, "workflow", rt!.id, DEFAULT_WORKFLOW);
@@ -193,13 +199,32 @@ export async function updateRecordType(tx: Tx, actor: Actor, id: string, input: 
   const patch = parse(recordTypePatchSchema, input);
   const before = await getRecordType(tx, id);
   const archivedAt = patch.archived === undefined ? before.archivedAt : patch.archived ? new Date() : null;
+  if (patch.isEpic !== undefined && patch.isEpic !== before.isEpic) {
+    // Keep epics one level deep: an epic type's records have no epic and sit in no sprint, and
+    // a type stops being an epic type only once nothing belongs to its records.
+    const [busy] = patch.isEpic
+      ? await tx<{ n: number }[]>`
+          select count(*)::int as n from records where record_type_id = ${id} and (epic_id is not null or sprint_id is not null) and deleted_at is null`
+      : await tx<{ n: number }[]>`
+          select count(*)::int as n from records c join records e on e.id = c.epic_id
+          where e.record_type_id = ${id} and c.deleted_at is null`;
+    if (busy && busy.n > 0) {
+      throw new AppError(
+        "conflict",
+        patch.isEpic
+          ? `${busy.n} ${before.name} record(s) belong to an epic or a sprint; take them out first`
+          : `${busy.n} record(s) belong to epics of this type; move them out first`,
+      );
+    }
+  }
   const [after] = await tx<RecordType[]>`
     update record_types set
       name = ${patch.name ?? before.name},
       description = ${patch.description ?? before.description},
+      is_epic = ${patch.isEpic ?? before.isEpic},
       archived_at = ${archivedAt}
     where id = ${id}
-    returning id, project_id, key, name, description, archived_at`;
+    returning id, project_id, key, name, description, is_epic, archived_at`;
   await audit(tx, actor, { entity: "record_type", entityId: id, action: "update", before, after });
   return after!;
 }
@@ -307,7 +332,7 @@ export async function getCompiledConfig(tx: Tx, actor?: Pick<Actor, "role">): Pr
   const staff = !actor || isStaff(actor);
   const projects = (await listProjects(tx)).filter((p) => staff || p.requesterAccess);
   const types = await tx<RecordType[]>`
-    select id, project_id, key, name, description, archived_at from record_types
+    select id, project_id, key, name, description, is_epic, archived_at from record_types
     where archived_at is null order by name`;
   const fields = await tx<(FieldDef & { recordTypeId: string })[]>`
     select ${FIELD_COLUMNS(tx)}, record_type_id from field_defs

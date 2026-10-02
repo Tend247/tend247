@@ -1,7 +1,9 @@
 // Fernhollow Foods, a made-up maker of sauces, spice blends and cold brew: the sample workspace
-// behind `npm run db:seed` and the public demo's golden copy. The four queues are the four
+// behind `npm run db:seed` and the public demo's golden copy. The four service queues are the
 // starter templates, installed through the template service; on top of them come people,
-// teams, a plant calendar, automation and a few dozen records in flight.
+// teams, a plant calendar, automation and a few dozen records in flight. A fifth project, the
+// wholesale ordering app, is an agile team mid-sprint: two finished sprints, one running, a
+// planned one, epics and a ranked backlog.
 import type { Tx } from "../db/client.ts";
 import type { Actor } from "../audit.ts";
 import { insertUser } from "../users/service.ts";
@@ -13,9 +15,14 @@ import { createComment, addWatcher } from "../comments/service.ts";
 import { createTeam } from "../teams/service.ts";
 import { createRule } from "../automation/service.ts";
 import { installTemplate } from "../templates/install.ts";
+import { completeSprint, createSprint, planRecord, startSprint } from "../agile/service.ts";
+import { touchSprint } from "../agile/snapshots.ts";
+import { updateRecord } from "../records/service.ts";
 
 /** Bump when the sample data changes: the demo rebuilds its golden copy and pool. */
-export const FERNHOLLOW_SEED_VERSION = 1;
+export const FERNHOLLOW_SEED_VERSION = 2;
+
+const DAY = 86_400_000;
 
 /** The demo's role switcher signs in as these people. */
 export const PERSONAS = {
@@ -28,8 +35,8 @@ export type Persona = keyof typeof PERSONAS;
 
 export interface Fernhollow {
   adminId: string;
-  projects: { hr: string; itsd: string; ite: string; fin: string };
-  types: { hr: string; itsd: string; ite: string; fin: string };
+  projects: { hr: string; itsd: string; ite: string; fin: string; app: string };
+  types: { hr: string; itsd: string; ite: string; fin: string; app: string };
 }
 
 export async function buildFernhollow(tx: Tx, tenantId: string, opts: { inbound?: boolean } = {}): Promise<Fernhollow> {
@@ -135,13 +142,129 @@ export async function buildFernhollow(tx: Tx, tenantId: string, opts: { inbound?
   await move(as(dana), h1.key, "review");
   await createComment(tx, as(dana), h1.key, { body: "Morgan confirmed; approving the swap.", internal: false });
 
+  const app = await buildOrderingApp(tx, as(admin), { dana: as(dana), lee: as(lee) }, productEng.id);
+
   // The workspace starts quiet: seed activity sends no notifications or emails.
   await tx`update outbox set delivered_at = now() where delivered_at is null`;
   await tx`delete from work_signals where tenant_id = ${tenantId}`;
 
   return {
     adminId: admin.id,
-    projects: { hr: hr.project.id, itsd: itsd.project.id, ite: ite.project.id, fin: fin.project.id },
-    types: { hr: hr.recordTypeId, itsd: itsdType, ite: ite.recordTypeId, fin: finType },
+    projects: { hr: hr.project.id, itsd: itsd.project.id, ite: ite.project.id, fin: fin.project.id, app: app.projectId },
+    types: { hr: hr.recordTypeId, itsd: itsdType, ite: ite.recordTypeId, fin: finType, app: app.storyType },
   };
+}
+
+/**
+ * The wholesale ordering app team: sprints 1 and 2 finished, sprint 3 six days into two weeks
+ * with a burndown that has moved (work done, a bug added, a story re-estimated), sprint 4
+ * planned, and a ranked backlog under three epics.
+ */
+async function buildOrderingApp(tx: Tx, admin: Actor, people: { dana: Actor; lee: Actor }, teamId: string) {
+  const { dana, lee } = people;
+  const installed = await installTemplate(tx, admin, "agile_team", { projectKey: "APP", projectName: "Wholesale Ordering App", teamId });
+  await updateProject(tx, admin, installed.project.id, { description: "The app grocery buyers use to reorder Fernhollow products. Planned in two-week sprints." });
+  const t = installed.recordTypeIds as Record<"story" | "bug" | "task" | "epic", string>;
+  const now = Date.now();
+  const at = (days: number) => new Date(now + days * DAY);
+
+  const make = async (by: Actor, type: keyof typeof t, title: string, points: number | null, extra: Record<string, unknown> = {}) =>
+    createRecord(tx, by, { recordTypeId: t[type], title, storyPoints: points, ...extra });
+  const go = async (by: Actor, key: string, to: "todo" | "in_progress" | "in_review" | "done" | "open") => {
+    const r = (await loadRecord(tx, by, key, { lock: true }))!;
+    return runTransition(tx, by, r, `to_${to}`, {});
+  };
+  const plan = (key: string, sprintId: string | null) => planRecord(tx, dana, key, { sprintId });
+
+  const reorder = await make(dana, "epic", "Wholesale reorder in two taps", null, { description: "Buyers reorder their usual products without calling the sales desk." });
+  const tracking = await make(dana, "epic", "Delivery tracking for buyers", null, { description: "Where is my order? Answered in the app, not by phone." });
+  const accounts = await make(dana, "epic", "Buyer accounts and invoices", null);
+  await go(dana, reorder.key, "in_progress");
+  await go(dana, accounts.key, "in_progress");
+  const E = { reorder: reorder.id, tracking: tracking.id, accounts: accounts.id };
+
+  // ---------------------------------------------------------------- sprint 1 (finished)
+  const s1 = await createSprint(tx, dana, installed.project.id, { goal: "Buyers can sign in and reorder" });
+  const s1items = [
+    await make(lee, "story", "Buyers sign in with a magic link", 3, { epicId: E.accounts, assigneeId: lee.userId }),
+    await make(dana, "story", "Show the last order on the home screen", 5, { epicId: E.reorder, assigneeId: dana.userId }),
+    await make(lee, "story", "Reorder a past order as it was", 8, { epicId: E.reorder, assigneeId: lee.userId }),
+    await make(lee, "task", "Set up error reporting for the app", 2, { assigneeId: lee.userId }),
+    await make(dana, "bug", "Prices show without tax on iPad", 3, { custom: { severity: "minor" }, assigneeId: dana.userId }),
+  ];
+  for (const r of s1items) await plan(r.key, s1.id);
+  await startSprint(tx, dana, s1.id, { startAt: at(-34), weeks: 2 });
+  for (const [i, r] of s1items.slice(0, 4).entries()) {
+    await go(r.assigneeId === dana.userId ? dana : lee, r.key, "done");
+    await touchSprint(tx, s1.id, at(-32 + i * 3));
+  }
+  await completeSprint(tx, dana, s1.id, {});
+
+  // ---------------------------------------------------------------- sprint 2 (finished)
+  const s2 = await createSprint(tx, dana, installed.project.id, { goal: "Edit before reordering; invoices in the app" });
+  const carried = s1items[4]!;
+  const s2items = [
+    carried,
+    await make(dana, "story", "Edit quantities before reordering", 5, { epicId: E.reorder, assigneeId: dana.userId }),
+    await make(lee, "story", "Download invoices as PDF", 5, { epicId: E.accounts, assigneeId: lee.userId }),
+    await make(dana, "story", "Round order lines to whole case packs", 3, { epicId: E.reorder, assigneeId: dana.userId }),
+    await make(lee, "task", "Load test the ordering API", 3, { assigneeId: lee.userId }),
+    await make(lee, "story", "Saved delivery addresses", 5, { epicId: E.accounts, assigneeId: lee.userId }),
+  ];
+  for (const r of s2items) await plan(r.key, s2.id);
+  await startSprint(tx, dana, s2.id, { startAt: at(-20), weeks: 2 });
+  for (const [i, r] of s2items.slice(0, 5).entries()) {
+    await go(r.assigneeId === dana.userId ? dana : lee, r.key, "done");
+    await touchSprint(tx, s2.id, at(-18 + i * 2.5));
+  }
+  await go(lee, s2items[5]!.key, "in_progress");
+
+  // ---------------------------------------------------------------- sprint 3 (running) and 4 (planned)
+  const s3 = await createSprint(tx, dana, installed.project.id, {});
+  const s4 = await createSprint(tx, dana, installed.project.id, {});
+  await completeSprint(tx, dana, s2.id, { moveTo: s3.id }); // saved addresses carry over
+  const map = await make(lee, "story", "Track a delivery on a map", 5, { epicId: E.tracking, assigneeId: lee.userId });
+  const s3items = [
+    map,
+    await make(dana, "story", "Delivery window notifications", 5, { epicId: E.tracking }),
+    await make(dana, "story", "Reorder reminders by email", 3, { epicId: E.reorder, assigneeId: dana.userId }),
+    await make(lee, "bug", "Cold brew products missing from search", 2, { custom: { severity: "critical" }, assigneeId: lee.userId, priority: "high" }),
+    await make(lee, "task", "Upgrade the payments SDK", 2, { assigneeId: lee.userId }),
+    await make(dana, "story", "Favourite products list", 3, { epicId: E.reorder, assigneeId: dana.userId }),
+  ];
+  for (const r of s3items) await plan(r.key, s3.id);
+  await startSprint(tx, dana, s3.id, { startAt: at(-6), weeks: 2, goal: "Buyers can see where their delivery is" });
+  await go(lee, map.key, "in_progress");
+  await go(dana, s3items[2]!.key, "done");
+  await touchSprint(tx, s3.id, at(-4));
+  await go(lee, s3items[3]!.key, "done");
+  const added = await make(dana, "bug", "Order total rounds wrong with a discount", 3, { custom: { severity: "major" }, priority: "high" });
+  await plan(added.key, s3.id);
+  await touchSprint(tx, s3.id, at(-3));
+  const fresh = (await loadRecord(tx, lee, map.key))!;
+  await updateRecord(tx, lee, map.key, { version: fresh.version, storyPoints: 8 }); // bigger than it looked
+  await touchSprint(tx, s3.id, at(-2));
+  await go(lee, s3items[4]!.key, "done");
+  await touchSprint(tx, s3.id, at(-1));
+  await go(dana, s3items[5]!.key, "in_progress");
+  await go(dana, s3items[5]!.key, "in_review");
+  await touchSprint(tx, s3.id, at(0));
+
+  for (const [title, points, epicId] of [
+    ["Show a buyer's credit limit", 3, E.accounts],
+    ["Proof-of-delivery photos", 5, E.tracking],
+  ] as const) {
+    const r = await make(dana, "story", title, points, { epicId });
+    await plan(r.key, s4.id);
+  }
+  // The backlog, in rank order.
+  await make(dana, "story", "Delivery ETA in the order list", 3, { epicId: E.tracking });
+  await make(dana, "story", "Upload an order from a spreadsheet", 8, { epicId: E.reorder });
+  await make(lee, "bug", "Sign-out button hidden on small phones", 1, { custom: { severity: "minor" } });
+  await make(dana, "story", "Show allergen information on products", 5);
+  await make(dana, "story", "Spanish translation", 8);
+
+  // History reads as it happened: the finished sprints keep their own dates.
+  await tx`update sprints set started_at = start_at, completed_at = end_at where id in (${s1.id}, ${s2.id})`;
+  return { projectId: installed.project.id, storyType: t.story };
 }
