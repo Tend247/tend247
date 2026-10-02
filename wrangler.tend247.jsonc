@@ -50,7 +50,7 @@
     "TEND247_DEMO_HOURS": "24",
     "TEND247_DEMO_MAX_RECORDS": "300",
     // The Turnstile widget's site key (public). Its secret is a Worker secret.
-    "TEND247_TURNSTILE_SITE_KEY": "REPLACE_WITH_TURNSTILE_SITE_KEY",
+    "TEND247_TURNSTILE_SITE_KEY": "0x4AAAAAAFLsa0PiAQFtKAkp",
     "TEND247_DEV_LOGIN": "false",
     "TEND247_OIDC_AUTO_PROVISION": "off",
     "TEND247_REQUESTER_DOMAINS": "",
